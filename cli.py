@@ -32,6 +32,9 @@ os.environ["MSWEA_SILENT_STARTUP"] = "1"  # mini-swe-agent
 os.environ["HERMES_QUIET"] = "1"  # Our own modules
 
 import yaml
+import time as _time_mod
+
+from agent.insights import _get_pricing, _has_known_pricing
 
 # prompt_toolkit for fixed input area TUI
 from prompt_toolkit.history import FileHistory
@@ -221,6 +224,8 @@ def load_cli_config() -> Dict[str, Any]:
             "model": "",       # Subagent model override (empty = inherit parent model)
             "provider": "",    # Subagent provider override (empty = inherit parent provider)
         },
+        "pricing": {},  # User-configurable model pricing overrides (USD per million tokens)
+                        # e.g. {"my-custom-model": {"input": 1.0, "output": 3.0}}
     }
     
     # Track whether the config file explicitly set terminal config.
@@ -1262,6 +1267,16 @@ class HermesCLI:
         self._spinner_text: str = ""  # thinking spinner text for TUI
         self._command_running = False
         self._command_status = ""
+        self._status_bar_start = _time_mod.monotonic()
+
+        # User-configurable pricing overrides (USD per million tokens).
+        # Checked before the built-in MODEL_PRICING table so users can set
+        # rates for custom/self-hosted models without mutating globals.
+        self._user_pricing: Dict[str, Dict[str, float]] = {
+            k.lower(): {"input": float(v["input"]), "output": float(v["output"])}
+            for k, v in (CLI_CONFIG.get("pricing") or {}).items()
+            if isinstance(v, dict) and "input" in v and "output" in v
+        }
 
         # Background task tracking: {task_id: threading.Thread}
         self._background_tasks: Dict[str, threading.Thread] = {}
@@ -1274,6 +1289,35 @@ class HermesCLI:
         if hasattr(self, "_app") and self._app and (now - self._last_invalidate) >= min_interval:
             self._last_invalidate = now
             self._app.invalidate()
+
+    # ── Pricing helpers (user overrides → built-in table) ──────────────
+
+    def _get_model_pricing(self, model: Optional[str] = None) -> Dict[str, float]:
+        """Return {input, output} pricing for the active model.
+
+        Checks user-configured overrides first, then falls back to the
+        built-in MODEL_PRICING table in agent.insights.
+        """
+        name = (model or self.model or "").split("/")[-1].lower()
+        if name in self._user_pricing:
+            return self._user_pricing[name]
+        return _get_pricing(model or self.model)
+
+    def _has_model_pricing(self, model: Optional[str] = None) -> bool:
+        """True if the model has known pricing (user-configured or built-in)."""
+        name = (model or self.model or "").split("/")[-1].lower()
+        return name in self._user_pricing or _has_known_pricing(model or self.model)
+
+    def _estimate_session_cost(self, prompt_tokens: int, completion_tokens: int) -> float:
+        """Estimate USD cost for the given token counts using active model pricing."""
+        pricing = self._get_model_pricing()
+        return (prompt_tokens * pricing["input"] + completion_tokens * pricing["output"]) / 1_000_000
+
+    def _format_elapsed(self, seconds: int) -> str:
+        """Format elapsed seconds as 'Xm XXs' or 'XhXXm'."""
+        h, rem = divmod(seconds, 3600)
+        m, s = divmod(rem, 60)
+        return f'{h}h{m:02d}m' if h > 0 else f'{m}m{s:02d}s'
 
     def _normalize_model_for_provider(self, resolved_provider: str) -> bool:
         """Strip provider prefixes and swap the default model for Codex.
@@ -3235,16 +3279,43 @@ class HermesCLI:
 
         msg_count = len(self.conversation_history)
 
-        print(f"  📊 Session Token Usage")
-        print(f"  {'─' * 40}")
-        print(f"  Prompt tokens (input):     {prompt:>10,}")
-        print(f"  Completion tokens (output): {completion:>9,}")
-        print(f"  Total tokens:              {total:>10,}")
-        print(f"  API calls:                 {calls:>10,}")
-        print(f"  {'─' * 40}")
-        print(f"  Current context:  {last_prompt:,} / {ctx_len:,} ({pct:.0f}%)")
-        print(f"  Messages:         {msg_count}")
-        print(f"  Compressions:     {compressions}")
+        elapsed_secs = int(_time_mod.monotonic() - self._status_bar_start)
+        duration_str = self._format_elapsed(elapsed_secs)
+
+        model_name = (self.model or "unknown").split("/")[-1]
+        pricing = self._get_model_pricing()
+        input_cost = prompt * pricing["input"] / 1_000_000
+        output_cost = completion * pricing["output"] / 1_000_000
+        total_cost = input_cost + output_cost
+        has_pricing = self._has_model_pricing()
+
+        ctx_pct = min(total / max(ctx_len, 1), 1.0)
+        filled = int(ctx_pct * 20)
+        bar = '\u2588' * filled + '\u2591' * (20 - filled)
+
+        sep = f"  {'─' * 44}"
+        print(f"  \U0001f4ca Session Usage — {model_name}")
+        print(sep)
+        print(f"  Duration:                    {duration_str:>12}")
+        print(f"  API calls (turns):           {calls:>12,}")
+        print(f"  Messages:                    {msg_count:>12}")
+        print(sep)
+        print(f"  Prompt tokens (input):       {prompt:>12,}")
+        print(f"  Completion tokens (output):  {completion:>12,}")
+        print(f"  Total tokens:                {total:>12,}")
+        print(sep)
+        print(f"  Context:  [{bar}] {int(ctx_pct * 100)}%")
+        print(f"            {last_prompt:,} / {ctx_len:,} tokens")
+        print(f"  Compressions:                {compressions:>12}")
+        print(sep)
+        if has_pricing:
+            print(f"  Input cost:                  ${input_cost:>11.4f}")
+            print(f"  Output cost:                 ${output_cost:>11.4f}")
+            print(f"  Total cost:                  ${total_cost:>11.4f}")
+            print(f"  Rate: ${pricing['input']:.2f}/${pricing['output']:.2f} per M tokens")
+        else:
+            print(f"  Cost: unknown (no pricing for {model_name})")
+            print(f"  Tip: add pricing in config.yaml under 'pricing:'")
 
         if self.verbose:
             logging.getLogger().setLevel(logging.DEBUG)
@@ -4487,6 +4558,89 @@ class HermesCLI:
             height=Condition(lambda: bool(cli_ref._attached_images)),
         )
 
+        # ── Status bar: model, tokens, context %, cost, elapsed time ──
+
+        def _fmt_k(n):
+            """Format token counts: 1234 -> '1.2k', 1234567 -> '1.2M'."""
+            if n >= 1_000_000:
+                return f"{n / 1_000_000:.1f}M"
+            if n >= 1_000:
+                return f"{n / 1_000:.1f}k"
+            return str(n)
+
+        _blink_on = [False]  # toggled each repaint for >95% blink effect
+
+        def _get_status_bar():
+            """Build the formatted-text list for the bottom status bar.
+
+            Layout (full):  model │ tokens / ctx [████░░░░░░] 42% │ $0.123 │ 3m12s
+            Layout (compact <60 cols): model │ tokens/ctx [█░░░░] 42% │ $— │ 3m12s
+            """
+            parts = []
+            compact = shutil.get_terminal_size((80, 24)).columns < 60
+
+            # ── Model name ──
+            model_name = (cli_ref.model or "unknown").split("/")[-1]
+            max_len = 12 if compact else 22
+            if len(model_name) > max_len:
+                model_name = model_name[:max_len - 2] + ".."
+            parts.append(('class:status-model', f' {model_name}'))
+            parts.append(('class:status-sep', ' \u2502 '))
+
+            # ── Tokens + context bar + cost ──
+            agent = getattr(cli_ref, 'agent', None)
+            if agent:
+                prompt_tok = agent.session_prompt_tokens
+                compl_tok = agent.session_completion_tokens
+                total_tok = agent.session_total_tokens
+                ctx_limit = agent.context_compressor.context_length
+                pct = min(total_tok / max(ctx_limit, 1), 1.0)
+
+                # Token count
+                div = " / " if not compact else "/"
+                parts.append(('class:status-tokens', f'{_fmt_k(total_tok)}{div}{_fmt_k(ctx_limit)}'))
+                parts.append(('class:status-sep', ' '))
+
+                # Context fullness bar
+                bar_len = 5 if compact else 10
+                filled = int(pct * bar_len)
+                if pct >= 0.95:
+                    _blink_on[0] = not _blink_on[0]
+                    bar_style = 'class:status-ctx-blink' if _blink_on[0] else 'class:status-ctx-red'
+                elif pct >= 0.8:
+                    bar_style = 'class:status-ctx-red'
+                elif pct >= 0.5:
+                    bar_style = 'class:status-ctx-yellow'
+                else:
+                    bar_style = 'class:status-ctx-green'
+                parts.append((bar_style, '\u2588' * filled + '\u2591' * (bar_len - filled)))
+                parts.append(('class:status-sep', f' {int(pct * 100)}%'))
+                parts.append(('class:status-sep', ' \u2502 '))
+
+                # Cost
+                if cli_ref._has_model_pricing():
+                    cost = cli_ref._estimate_session_cost(prompt_tok, compl_tok)
+                    parts.append(('class:status-cost', f'${cost:.3f}'))
+                else:
+                    parts.append(('class:status-cost', '$\u2014'))
+            else:
+                parts.append(('class:status-tokens', '0 / \u2014'))
+                parts.append(('class:status-sep', ' \u2502 '))
+                parts.append(('class:status-cost', '$\u2014'))
+
+            # ── Elapsed time ──
+            parts.append(('class:status-sep', ' \u2502 '))
+            elapsed = int(_time_mod.monotonic() - cli_ref._status_bar_start)
+            parts.append(('class:status-time', f'{cli_ref._format_elapsed(elapsed)} '))
+
+            return parts
+
+        status_bar = Window(
+            content=FormattedTextControl(_get_status_bar),
+            height=1,
+            style='class:status-bar',
+        )
+
         # Layout: interactive prompt widgets + ruled input at bottom.
         # The sudo, approval, and clarify widgets appear above the input when
         # the corresponding interactive prompt is active.
@@ -4502,6 +4656,7 @@ class HermesCLI:
                 image_bar,
                 input_area,
                 input_rule_bot,
+                status_bar,
                 CompletionsMenu(max_height=12, scroll_offset=1),
             ])
         )
@@ -4542,6 +4697,17 @@ class HermesCLI:
             'approval-cmd': '#AAAAAA italic',
             'approval-choice': '#AAAAAA',
             'approval-selected': '#FFD700 bold',
+            # Status bar
+            'status-bar': 'bg:#1a1a2e #888888',
+            'status-model': '#CD7F32 bold',
+            'status-tokens': '#AAAAAA',
+            'status-ctx-green': '#50C878',
+            'status-ctx-yellow': '#FFD700',
+            'status-ctx-red': '#FF4444',
+            'status-ctx-blink': '#FF4444 bold reverse',
+            'status-cost': '#87CEEB',
+            'status-time': '#888888 italic',
+            'status-sep': '#555555',
         })
         
         # Create the application
@@ -4559,9 +4725,13 @@ class HermesCLI:
             import time as _time
 
             while not self._should_exit:
-                if self._command_running and self._app:
+                if (self._command_running or self._agent_running) and self._app:
                     self._invalidate(min_interval=0.1)
                     _time.sleep(0.1)
+                elif self._app:
+                    # Slow refresh for status bar elapsed time ticker
+                    self._invalidate(min_interval=1.0)
+                    _time.sleep(1.0)
                 else:
                     _time.sleep(0.05)
 
