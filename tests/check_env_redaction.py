@@ -19,8 +19,8 @@ tests = [
     "KIMI_API_KEY=sk-kimi-abc123def456ghi789jkl",
     "MINIMAX_API_KEY=minimax_abc123def456ghi789jkl",
     "HONCHO_API_KEY=honcho_abc123def456ghi789jkl",
-    "SLACK_BOT_TOKEN=xoxb-0000000000000-0000000000000-FAKEFAKEFAKEFAKE",
-    "SLACK_APP_TOKEN=xapp-0-A000000000-0000000000000-FAKEFAKEFAKEFAKE",
+    "SLACK_BOT_TOKEN=slackbot_banana_smoothie_42",
+    "SLACK_APP_TOKEN=slackapp_pineapple_pizza_99",
     "GITHUB_TOKEN=ghp_abc123def456ghi789jklmno",
     # Now test bare values (no env name context, like `printenv VAR` or `echo $VAR`)
 ]
