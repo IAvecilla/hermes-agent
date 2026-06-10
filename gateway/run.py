@@ -8321,29 +8321,37 @@ class GatewayRunner(GatewayAuthorizationMixin, GatewayKanbanWatchersMixin, Gatew
                 )
                 context_prompt += _intro_note
         
-        # One-time prompt if no home channel is set for this platform
+        # First contact with no home channel set for this platform.
         # Skip for webhooks - they deliver directly to configured targets (github_comment, etc.)
         if not history and source.platform and source.platform != Platform.LOCAL and source.platform != Platform.WEBHOOK:
             platform_name = source.platform.value
             env_key = _home_target_env_var(platform_name)
             if not os.getenv(env_key):
-                # Slack dispatches all Hermes commands through a single
-                # parent slash command `/hermes`; bare `/sethome` is not
-                # registered and would fail with "app did not respond".
-                sethome_cmd = (
-                    "/hermes sethome"
-                    if source.platform == Platform.SLACK
-                    else "/sethome"
-                )
-                notice = (
-                    f"📬 No home channel is set for {platform_name.title()}. "
-                    f"A home channel is where Hermes delivers cron job results "
-                    f"and cross-platform messages.\n\n"
-                    f"Type {sethome_cmd} to make this chat your home channel, "
-                    f"or ignore to skip."
-                )
-                await self._deliver_platform_notice(source, notice)
-        
+                chat_type = getattr(source, "chat_type", "") or ""
+                if chat_type == "dm" and not self.session_store.has_any_sessions():
+                    try:
+                        await self._handle_set_home_command(event)
+                    except Exception as e:
+                        logger.warning("Auto-sethome on first DM failed: %s", e)
+                else:
+                    # Group/forum/channel or a DM that isn't the install's first
+                    # session ask and frame as optional.
+                    # Slack dispatches all Hermes commands through a single
+                    # parent slash command `/hermes`; bare `/sethome` is not
+                    # registered and would fail with "app did not respond".
+                    sethome_cmd = (
+                        "/hermes sethome"
+                        if source.platform == Platform.SLACK
+                        else "/sethome"
+                    )
+                    notice = (
+                        f"👋 Tip: if you'd like me to send reminders and scheduled "
+                        f"updates here, reply {sethome_cmd} and I'll make this chat "
+                        f"our main spot. Totally optional, feel free to ignore this "
+                        f"and just keep chatting."
+                    )
+                    await self._deliver_platform_notice(source, notice)
+
         # -----------------------------------------------------------------
         # Voice channel awareness — inject current voice channel state
         # into context so the agent knows who is in the channel and who
