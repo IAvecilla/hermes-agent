@@ -70,8 +70,12 @@ def test_image_ships_a_headed_chromium_not_only_the_headless_shell() -> None:
     # chrome-headless-shell can drive pages but cannot open a window, so a human
     # who takes over the screen would have no browser to log in with.
     assert "npx playwright install --with-deps chromium --only-shell" in text
-    assert re.search(r"npx playwright install --with-deps chromium\s*&&", text), \
+    assert re.search(r"npx playwright install chromium\s*&&", text), \
         "the full headed chromium build is no longer installed"
+    # --with-deps is an apt transaction for shared system libraries. The second install reuses them, so
+    # running it twice just pays for a redundant ~100-package apt round on every cold build.
+    assert text.count("playwright install --with-deps") == 1, \
+        "--with-deps belongs on the first playwright install only"
 
 
 def test_container_gets_an_xdg_runtime_dir_outside_the_data_volume() -> None:
@@ -111,3 +115,16 @@ def test_every_required_binary_is_covered_by_a_baked_package() -> None:
         if pkg not in baked
     }
     assert not missing, f"binaries the image would still be missing at runtime: {missing}"
+
+
+def test_browser_discovery_prefers_the_headless_shell() -> None:
+    """AGENT_BROWSER_EXECUTABLE_PATH is what agent-browser launches for ordinary headless browsing on every
+    deployment. Bot Screen needs a headed browser but resolves one itself (browser.py::executable rejects a
+    headless-shell override), so preferring the headed build here would raise memory everywhere for nothing.
+    """
+    hook = (REPO_ROOT / "docker" / "stage2-hook.sh").read_text()
+    block = hook.split("Discover agent-browser's Chromium binary", 1)[1]
+    shell = block.find("chrome-headless-shell")
+    headed = block.find("-name 'chrome'")
+    assert shell != -1 and headed != -1, "the ordered discovery is gone"
+    assert shell < headed, "the headless shell must be searched first"

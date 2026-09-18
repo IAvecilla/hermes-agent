@@ -173,3 +173,28 @@ def test_unprivileged_host_cannot_install(tmp_path, monkeypatch):
     monkeypatch.setattr(runtime, "missing_binaries", lambda: ["Xvnc"])
     with pytest.raises(RuntimeError, match="baked in"):
         runtime.start()
+
+
+def test_a_root_host_without_a_package_manager_is_told_the_truth(tmp_path, monkeypatch):
+    """Alpine/NixOS/distroless as root: installable() is False for a reason that has nothing to do with
+    privilege, so the message must not blame sudo or point at the Docker image."""
+    _running_linux_host(monkeypatch, tmp_path)
+    monkeypatch.setattr(runtime, "missing_binaries", lambda: ["Xvnc"])
+    monkeypatch.setattr(runtime, "package_manager", lambda: None)
+    monkeypatch.setattr(runtime, "is_root", lambda: True)
+    assert runtime.installable() is False
+    with pytest.raises(RuntimeError) as excinfo:
+        runtime.start()
+    message = str(excinfo.value)
+    assert "package manager" in message
+    assert "unprivileged" not in message and "sudo" not in message, f"wrong diagnosis: {message}"
+
+
+def test_a_host_that_can_install_gets_the_command(tmp_path, monkeypatch):
+    """The branch that used to be unreachable behind an `or` fallback."""
+    _running_linux_host(monkeypatch, tmp_path)
+    monkeypatch.setattr(runtime, "missing_binaries", lambda: ["Xvnc"])
+    monkeypatch.setattr(runtime, "package_manager", lambda: "apt")
+    monkeypatch.setattr(runtime, "is_root", lambda: True)
+    with pytest.raises(RuntimeError, match="tigervnc-standalone-server"):
+        runtime.start()

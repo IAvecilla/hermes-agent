@@ -497,13 +497,19 @@ def start(*, wait_seconds: float = 15.0) -> DesktopStatus:
         raise RuntimeError("Bot Desktop runs on Linux gateway hosts only")
     missing = missing_binaries()
     if missing:
+        # Three different dead ends, and telling them apart is the whole value of the message: an operator
+        # on Alpine who is told "unprivileged, no sudo" while running as root goes looking for the wrong bug.
+        need = f"Bot Desktop needs {', '.join(missing)} on the gateway host"
+        if package_manager() is None:
+            raise RuntimeError(
+                f"{need}, and no supported package manager (apt/dnf/pacman) is available to install them. "
+                "Install TigerVNC (Xvnc) and the Xfce core components with this distro's own tooling.")
         if not installable():
             raise RuntimeError(
-                f"Bot Desktop needs {', '.join(missing)} on the gateway host, and this host cannot install "
-                "them: the process is unprivileged and there is no sudo. On the published Docker image the "
-                "packages have to be baked in, so this needs a newer image rather than an install.")
-        hint = install_command() or "install TigerVNC (Xvnc) and the Xfce core components"
-        raise RuntimeError(f"Bot Desktop needs {', '.join(missing)} on the gateway host. Install: {hint}")
+                f"{need}, and this host cannot install them: the process is unprivileged and there is no "
+                "sudo. On the published Docker image the packages have to be baked in, so this needs a "
+                "newer image rather than an install.")
+        raise RuntimeError(f"{need}. Install: {install_command()}")
     sd = state_dir()
     sd.mkdir(parents=True, exist_ok=True)
     os.chmod(sd, 0o700)

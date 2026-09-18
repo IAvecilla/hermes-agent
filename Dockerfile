@@ -75,8 +75,9 @@ RUN apt-get -o Acquire::Retries=3 update && \
 
 # Bot Screen (opt-in): TigerVNC + the Xfce components + a headed chromium, so a
 # container that cannot run apt at run time (unprivileged user, no sudo — every
-# hosted instance) can still stream a desktop. ~550 MB. Nothing here starts at
-# boot; the layer costs no memory until a screen is started.
+# hosted instance) can still stream a desktop. ~930 MB unpacked under /usr
+# (measured on debian:13.4). Nothing here starts at boot; the layer costs no
+# memory until a screen is started.
 #
 # PACKAGES["apt"] in tools/bot_desktop/runtime.py (what a self-hosted operator
 # installs by hand) plus apt `chromium`, so the dock's Browser icon has a headed
@@ -231,15 +232,16 @@ ENV npm_config_install_links=false
 #                  Both must be the SAME browser family sharing one
 #                  --user-data-dir, or a human who takes over logs into a jar
 #                  the bot never sees.
-# --with-deps is only needed once; the second install reuses the same system
-# libraries. Keep both in one RUN so a retry re-runs the pair together.
+# --with-deps only on the first install: it is an apt transaction for the shared
+# system libraries, and the second build reuses them. Keep both in one RUN so a
+# retry re-runs the pair together.
 RUN npm install --prefer-offline --no-audit --fetch-retries=5 && \
     for i in 1 2 3; do \
         npx playwright install --with-deps chromium --only-shell && break || \
         { [ "$i" = 3 ] && exit 1; echo "playwright headless-shell install failed (attempt $i); retrying in 10s"; sleep 10; }; \
     done && \
     for i in 1 2 3; do \
-        npx playwright install --with-deps chromium && break || \
+        npx playwright install chromium && break || \
         { [ "$i" = 3 ] && exit 1; echo "playwright chromium install failed (attempt $i); retrying in 10s"; sleep 10; }; \
     done && \
     npm cache clean --force

@@ -777,19 +777,24 @@ fi
 if [ -z "${AGENT_BROWSER_EXECUTABLE_PATH:-}" ] && \
         [ -n "${PLAYWRIGHT_BROWSERS_PATH:-}" ] && \
         [ -d "$PLAYWRIGHT_BROWSERS_PATH" ]; then
-    # Ordered, not a single find: the image now ships BOTH the full chromium
-    # build and chrome-headless-shell (Bot Screen needs a browser that can open
-    # a window on the bot's X display; the headless shell cannot). One find with
-    # alternated -name predicates returns them in directory order, so it would
-    # export whichever Playwright happened to unpack first. Prefer the headed
-    # build and fall back to the shell, so an image built without it (custom
-    # builds that strip the headed chromium) keeps today's behaviour.
+    # Ordered, not a single find: the image now ships BOTH chrome-headless-shell
+    # and the full chromium build, and one find with alternated -name predicates
+    # returns them in directory order — it would export whichever Playwright
+    # happened to unpack first. That non-determinism is what the ordering fixes.
+    #
+    # The headless shell comes FIRST deliberately. This variable is what
+    # agent-browser launches for ordinary headless browsing on every existing
+    # deployment, and the shell is the lighter of the two builds; preferring the
+    # headed one here would raise per-session memory everywhere to serve Bot
+    # Screen, which does not need it — tools/bot_desktop/browser.py::executable()
+    # rejects a headless-shell override (_is_headless_shell) and resolves the
+    # headed build on its own.
     browser_bin=$(find "$PLAYWRIGHT_BROWSERS_PATH" -type f -executable \
-        \( -name 'chrome' -o -name 'chromium' -o -name 'chromium-browser' \) \
+        \( -name 'chrome-headless-shell' -o -name 'headless_shell' \) \
         2>/dev/null | head -n 1)
     if [ -z "$browser_bin" ]; then
         browser_bin=$(find "$PLAYWRIGHT_BROWSERS_PATH" -type f -executable \
-            \( -name 'chrome-headless-shell' -o -name 'headless_shell' \) \
+            \( -name 'chrome' -o -name 'chromium' -o -name 'chromium-browser' \) \
             2>/dev/null | head -n 1)
     fi
     if [ -n "$browser_bin" ]; then
