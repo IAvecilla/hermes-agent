@@ -102,8 +102,10 @@ docker build --build-arg HERMES_BOT_DESKTOP=1 -t hermes-agent:screen .
 ```
 
 It adds TigerVNC, the Xfce components and a headed `chromium` (for the dock's
-Browser icon) as one layer (~930 MB). Nothing starts at boot; an image built this
-way costs no memory until a screen is started.
+Browser icon), plus Playwright's headed Chromium build — about **1.4 GB** of
+image (measured: 4.1 GB without the argument, 5.5 GB with it on arm64), of which
+~930 MB is the apt layer. Nothing starts at boot; an image built this way costs
+no memory until a screen is started.
 
 ## Using it
 
