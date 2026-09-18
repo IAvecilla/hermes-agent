@@ -69,9 +69,8 @@ def _stat_value(path: Path, key: str) -> Optional[int]:
 def _cgroup_limit_and_usage() -> tuple[Optional[int], Optional[int]]:
     """The cgroup's limit and its *working set* — usage minus reclaimable page cache.
 
-    ``memory.current`` counts page cache, which is why a container still reads several hundred MB above
-    idle right after a desktop stops with every process gone. Charging that against the limit would make
-    this gate tighten the longer an instance stays up and refuse starts that would have been fine, so we
+    ``memory.current`` counts page cache, so a container reads several hundred MB above idle right after a
+    desktop stops with every process gone. Charging that would make the gate tighten over uptime, so we
     subtract ``inactive_file``, the working-set convention kubelet uses.
     """
     limit = _read_int(_CGROUP_V2 / "memory.max")

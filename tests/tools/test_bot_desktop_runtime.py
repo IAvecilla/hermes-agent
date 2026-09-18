@@ -25,10 +25,8 @@ def test_every_required_binary_maps_to_an_installed_package(pm):
 
 
 def test_the_image_bakes_the_same_apt_packages_the_runtime_would_install() -> None:
-    """Hosted deployments cannot install at run time, so the image layer is the only delivery path: a
-    package added to ``PACKAGES["apt"]`` but not the Dockerfile stalls the screen with no error until
-    someone presses Start. Reads the Dockerfile only to recover the list; the assertion is data-to-data.
-    """
+    """The image layer is the only delivery path on a hosted instance, so a package added here but not
+    there stalls the screen with no error until someone presses Start."""
     dockerfile = Path(__file__).resolve().parents[2] / "Dockerfile"
     text = dockerfile.read_text()
     assert "ARG HERMES_BOT_DESKTOP" in text, "the Bot Screen apt layer is gone from the Dockerfile"
@@ -315,7 +313,7 @@ def test_allocation_lock_is_released_once_xvnc_claims_the_number(in_process_runt
 
 
 def _startable_host(monkeypatch, tmp_path, *, running=False):
-    """A Linux host with the packages present, so only the checks under test can block a start."""
+    """A Linux host with the packages present, so only the check under test can block a start."""
     from tools.bot_desktop import resources
     monkeypatch.setattr(runtime, "is_supported_host", lambda: True)
     monkeypatch.setattr(runtime, "missing_binaries", lambda: [])
@@ -332,16 +330,14 @@ def _startable_host(monkeypatch, tmp_path, *, running=False):
 
 
 def test_a_running_desktop_is_never_refused_for_the_memory_it_is_using(tmp_path, monkeypatch):
-    """start() is idempotent. The gate guards the allocation, not the session: a desktop that is already
-    up is itself what is consuming the memory, so checking before the running-check made Start fail on a
-    perfectly healthy screen."""
+    """The gate guards the allocation, not the session: a running desktop is itself what consumes the
+    memory, so checking before the running-check made Start fail on a healthy screen."""
     _startable_host(monkeypatch, tmp_path, running=True)
     runtime.start()  # returns status(); must not raise about headroom
 
 
 def test_a_root_host_without_a_package_manager_is_told_the_truth(tmp_path, monkeypatch):
-    """Alpine/NixOS/distroless as root: installable() is False for a reason that has nothing to do with
-    privilege, so the message must not blame sudo or point at the Docker image."""
+    """Root with no package manager: installable() is False for a reason unrelated to privilege."""
     _startable_host(monkeypatch, tmp_path)
     monkeypatch.setattr(runtime, "missing_binaries", lambda: ["Xvnc"])
     monkeypatch.setattr(runtime, "package_manager", lambda: None)

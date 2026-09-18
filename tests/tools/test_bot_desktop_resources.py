@@ -65,7 +65,7 @@ def test_memory_info_takes_the_tighter_of_cgroup_and_host(tmp_path, monkeypatch)
 
 
 def _cgroup(monkeypatch, tmp_path, *, v2=True, limit, usage, cache):
-    """A cgroup tree reporting ``usage`` consumed, ``cache`` of it reclaimable page cache."""
+    """A cgroup tree: ``usage`` consumed, ``cache`` of it reclaimable."""
     root = tmp_path / "cg"
     root.mkdir(exist_ok=True)
     monkeypatch.setattr(resources, "_MEMINFO", tmp_path / "no-meminfo")  # cgroup numbers only
@@ -85,12 +85,8 @@ def _cgroup(monkeypatch, tmp_path, *, v2=True, limit, usage, cache):
 
 @pytest.mark.parametrize("v2", [True, False], ids=["cgroup-v2", "cgroup-v1"])
 def test_page_cache_does_not_count_against_the_limit(tmp_path, monkeypatch, v2):
-    """A 4 GB instance idling at 643 MiB of mostly page cache must not read as 643 MiB consumed.
-
-    ``memory.current`` counts reclaimable cache, so charging it would make the gate tighten the longer an
-    instance stays up — and refuse to restart a screen that the idle auto-stop had just stopped, since the
-    stopped desktop's cache is still charged.
-    """
+    """643 MiB of mostly page cache must not read as 643 MiB consumed: charging it would tighten the gate
+    over uptime, and refuse to restart a screen the idle auto-stop had just stopped."""
     MB = 1024 * 1024
     _cgroup(monkeypatch, tmp_path, v2=v2, limit=4096 * MB, usage=643 * MB, cache=340 * MB)
     assert resources.memory_info().available_mb == 4096 - (643 - 340)

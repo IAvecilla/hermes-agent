@@ -73,24 +73,13 @@ RUN apt-get -o Acquire::Retries=3 update && \
     ca-certificates curl iputils-ping python3 python-is-python3 ripgrep ffmpeg gcc g++ make cmake python3-dev python3-venv libffi-dev libolm-dev libatomic1 procps git openssh-client docker-cli xz-utils && \
     rm -rf /var/lib/apt/lists/*
 
-# Bot Screen (opt-in): TigerVNC + the Xfce components + a headed chromium, so a
-# container that cannot run apt at run time (unprivileged user, no sudo — every
-# hosted instance) can still stream a desktop. ~930 MB unpacked under /usr
-# (measured on debian:13.4). Nothing here starts at boot; the layer costs no
-# memory until a screen is started.
-#
-# PACKAGES["apt"] in tools/bot_desktop/runtime.py (what a self-hosted operator
-# installs by hand) plus apt `chromium`, so the dock's Browser icon has a headed
-# browser. tests/tools/test_dockerfile_bot_desktop_packages.py fails if the two
-# drift. Xvnc and the Xfce components all run fine unprivileged — Xvnc is a
-# userspace X server with no DRM/input device access, unlike Xorg on real
-# hardware — so only this build step needs root, nothing at run time does.
+# Bot Screen (opt-in): PACKAGES["apt"] from tools/bot_desktop/runtime.py plus apt
+# `chromium` for the dock's Browser icon. ~930 MB on debian:13.4; nothing starts
+# at boot. docker.yml passes =1, so the published image always carries them:
+# hosted sandboxes pull a prebuilt image and never run a build, and cannot apt
+# at run time either (unprivileged, no sudo). Only this build step needs root —
+# Xvnc is a userspace X server, so the runtime user can drive it.
 #   docker build --build-arg HERMES_BOT_DESKTOP=1 .
-# .github/workflows/docker.yml passes =1, so the PUBLISHED image always carries
-# them: hosted sandboxes (Fly Machines, Azure container instances) pull a
-# prebuilt image and never run a build, so a build arg cannot reach them and
-# there is no run-time install path either (unprivileged user, no sudo,
-# read-only /opt/hermes). A plain `docker build .` still gets a lean image.
 ARG HERMES_BOT_DESKTOP=0
 RUN if [ "$HERMES_BOT_DESKTOP" = "1" ]; then \
         apt-get -o Acquire::Retries=3 update && \
@@ -232,12 +221,9 @@ RUN npm install --prefer-offline --no-audit --fetch-retries=5 && \
     done && \
     npm cache clean --force
 
-# The full headed chromium, gated with the desktop packages: chrome-headless-shell
-# CANNOT open a window, so Bot Screen's dock Browser icon needs this build. Same
-# Chromium family as the shell, so the agent and the human share one
-# --user-data-dir without a version mismatch. No --with-deps: the system libraries
-# are already installed above. Gated because a build without a desktop has nothing
-# to show a window on, and this is a few hundred MB.
+# chrome-headless-shell cannot open a window, so the dock's Browser icon needs the
+# full build. Same Chromium family as the shell, so agent and human share one
+# --user-data-dir. Gated: a build with no desktop has nothing to show it on.
 RUN if [ "$HERMES_BOT_DESKTOP" = "1" ]; then \
         for i in 1 2 3; do \
             npx playwright install chromium && break || \
@@ -323,9 +309,7 @@ RUN cd web && npm run build && \
     cd ../ui-tui && npm run build
 
 # ---------- Bot Screen X socket directory ----------
-# X servers put their socket in /tmp/.X11-unix and their lock in /tmp/.X<n>-lock.
-# Debian's /tmp is already 1777 so the unprivileged runtime user can create the
-# directory itself, but pre-creating it with the sticky bit keeps ownership
+# Xvnc would create this itself (/tmp is 1777); pre-creating it keeps ownership
 # deterministic when HERMES_UID is remapped between boots.
 RUN mkdir -p /tmp/.X11-unix && chmod 1777 /tmp/.X11-unix
 
@@ -454,14 +438,10 @@ ENV HERMES_DISABLE_LAZY_INSTALLS=1
 # updates (an ABI stamp invalidates it if a rebuild bumps the interpreter).
 ENV HERMES_LAZY_INSTALL_TARGET=/opt/data/lazy-packages
 
-# Xfce, dbus-run-session and Bot Screen's display-allocation lock all want an
-# XDG_RUNTIME_DIR. Nothing sets one in a container (there is no logind to
-# create /run/user/<uid>), and the fallback is $HOME/.cache, which here is the
-# /opt/data volume: commonly bind-mounted and sometimes SHARED with a host-side
-# Hermes install, so two instances would contend for one display-alloc lock and
-# collide on dbus sockets. Point it at a container-scoped path under /tmp
-# instead: per-boot, per-container, and matching the spec's "cleared on reboot"
-# semantics. Seeded 0700 by docker/stage2-hook.sh.
+# Xfce, dbus and the display-allocation lock need one; containers have no logind
+# to create /run/user/<uid>. The default fallback ($HOME/.cache) is the /opt/data
+# volume, which a host-side install may share — two instances would then contend
+# for one lock. Container-scoped instead; seeded 0700 by docker/stage2-hook.sh.
 ENV XDG_RUNTIME_DIR=/tmp/hermes-runtime
 
 # `docker exec` privilege-drop shim. When operators run

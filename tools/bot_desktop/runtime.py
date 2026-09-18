@@ -282,11 +282,9 @@ def _kill_group_then_wait(pgid: Optional[int], pid: int, grace: float = 2.0) -> 
     _reap_if_ours()
 
 
-# Host-wide (every profile allocates from one band), so it lives outside any profile home. The file must
-# not be squattable: a predictable name directly in world-writable /tmp would let another local user
-# pre-create it. XDG_RUNTIME_DIR is the boundary that keeps it safe — logind makes /run/user/<uid> 0700,
-# and in containers (which have no logind) the image points it at a container-scoped path that
-# docker/stage2-hook.sh creates 0700 and owned by the runtime user, refusing to follow a symlink there.
+# Host-wide (every profile allocates from one band), so it lives outside any profile home. A predictable
+# name must not be squattable: XDG_RUNTIME_DIR is the boundary — 0700 from logind, or from
+# docker/stage2-hook.sh in containers, which have none.
 _ALLOC_LOCK = Path(os.environ.get("XDG_RUNTIME_DIR") or Path.home() / ".cache") / "hermes-bot-desktop-alloc.lock"
 
 
@@ -475,13 +473,10 @@ def _profile_name() -> str:
         return "default"
 
 
-# Measured in the official image (cgroup memory.current): gateway idle 304 MiB; Xvnc + Xfce with nothing
-# open 520 MiB (+216); one Chromium page 1073 MiB (+553, peak 1115). The browser dominates and that is the
-# point of the feature, so the desktop is not something to squeeze under a budget. What we can do is refuse
-# to start when there is not enough headroom, because the kernel OOM killer picks a victim by score, not by
-# who caused the pressure: on a small instance it takes out the dashboard or the gateway and the desktop
-# survives, which surfaces as an unrelated outage nobody traces back to here. The measurement and the floor
-# both live in ``resources`` so ``start()`` and ``status()`` cannot disagree about them.
+# The gate lives in ``resources`` so start() and status() cannot disagree about it. Measured in the
+# official image: gateway idle 304 MiB, +216 for Xvnc/Xfce, 1073 MiB with one Chromium page. The OOM
+# killer picks by score, so on a small instance the casualty is the dashboard or the gateway, not the
+# desktop that caused the pressure.
 
 
 def start(*, wait_seconds: float = 15.0) -> DesktopStatus:
@@ -497,8 +492,7 @@ def start(*, wait_seconds: float = 15.0) -> DesktopStatus:
         raise RuntimeError("Bot Desktop runs on Linux gateway hosts only")
     missing = missing_binaries()
     if missing:
-        # Three different dead ends, and telling them apart is the whole value of the message: an operator
-        # on Alpine who is told "unprivileged, no sudo" while running as root goes looking for the wrong bug.
+        # Three dead ends: an operator told "unprivileged, no sudo" while running as root hunts the wrong bug.
         need = f"Bot Desktop needs {', '.join(missing)} on the gateway host"
         if package_manager() is None:
             raise RuntimeError(

@@ -218,12 +218,8 @@ def test_headless_shell_override_is_not_a_headed_browser(tmp_path, monkeypatch):
 
 
 def test_a_headless_shell_pin_is_replaced_while_a_screen_is_up(tmp_path, monkeypatch):
-    """The official image's boot hook exports a chrome-headless-shell path for ordinary headless browsing.
-
-    A plain setdefault would leave the agent on that build while the dock's Browser icon runs the headed
-    one — two binaries on one --user-data-dir. Chromium's singleton then forwards the human's dock launch
-    into the agent's windowless process and no window ever appears.
-    """
+    """The boot hook exports a chrome-headless-shell path; leaving it would put the agent and the dock on
+    two binaries over one --user-data-dir, where the singleton swallows the dock's launch."""
     shell = tmp_path / "chrome-headless-shell"
     shell.write_text("#!/bin/sh\n", encoding="utf-8")
     shell.chmod(0o755)

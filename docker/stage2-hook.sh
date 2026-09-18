@@ -396,20 +396,11 @@ as_hermes mkdir -p \
     "$HERMES_HOME/lazy-packages"
 
 # --- XDG_RUNTIME_DIR ---
-# Xfce, dbus-run-session and Bot Screen's display-allocation lock expect one.
-# Containers have no logind to create /run/user/<uid>, so the Dockerfile points
-# XDG_RUNTIME_DIR at a container-scoped path under /tmp and we create it here,
-# owned by hermes and 0700 as the spec requires (dbus refuses a world-readable
-# runtime dir). Deliberately NOT under $HERMES_HOME: that volume is commonly
-# bind-mounted and sometimes shared with a host-side install.
-#
-# The parent is world-writable sticky /tmp and the name is predictable, and /tmp
-# survives `docker restart`, so this directory is the security boundary for
-# everything inside it — Bot Screen's display-allocation lock most of all. Guard
-# the symlink case like every other root chmod in this file, and force ownership
-# rather than assuming it: `usermod -u` above does not chown paths outside the
-# home dir, so a HERMES_UID remap otherwise leaves a 0700 directory belonging to
-# the OLD uid and every Xfce/dbus/lock open fails EACCES.
+# 0700 as dbus requires. It lives in world-writable /tmp under a predictable name
+# and holds the display-allocation lock, so it is a security boundary: guard the
+# symlink case, and chown rather than assume — `usermod -u` above does not chown
+# outside the home dir, so a HERMES_UID remap would leave it owned by the old uid
+# and every Xfce/dbus/lock open would fail EACCES.
 if [ -n "${XDG_RUNTIME_DIR:-}" ]; then
     if refuse_symlinked_path "create" "$XDG_RUNTIME_DIR"; then
         :
@@ -747,12 +738,10 @@ if [ -d "$INSTALL_DIR/skills" ]; then
 fi
 
 # --- Discover agent-browser's Chromium binary ---
-# The image's Dockerfile runs `npx playwright install chromium` twice (the
-# headless shell and the full headed build), which populates
-# ``$PLAYWRIGHT_BROWSERS_PATH`` (=/opt/hermes/.playwright) with a
-# ``chromium_headless_shell-<build>/chrome-headless-shell-linux64/`` directory
-# and a ``chromium-<build>/chrome-linux64/`` one. agent-browser (the runtime
-# CLI Hermes spawns for the
+# The image populates ``$PLAYWRIGHT_BROWSERS_PATH`` (=/opt/hermes/.playwright)
+# with ``chromium_headless_shell-<build>/chrome-headless-shell-linux64/``, plus
+# ``chromium-<build>/chrome-linux64/`` on a HERMES_BOT_DESKTOP build.
+# agent-browser (the runtime CLI Hermes spawns for the
 # browser tool) doesn't recognise this layout in its own cache scan and
 # fails with "Auto-launch failed: Chrome not found" — even though the
 # binary is right there (#15697).
@@ -777,18 +766,11 @@ fi
 if [ -z "${AGENT_BROWSER_EXECUTABLE_PATH:-}" ] && \
         [ -n "${PLAYWRIGHT_BROWSERS_PATH:-}" ] && \
         [ -d "$PLAYWRIGHT_BROWSERS_PATH" ]; then
-    # Ordered, not a single find: the image now ships BOTH chrome-headless-shell
-    # and the full chromium build, and one find with alternated -name predicates
-    # returns them in directory order — it would export whichever Playwright
-    # happened to unpack first. That non-determinism is what the ordering fixes.
-    #
-    # The headless shell comes FIRST deliberately. This variable is what
-    # agent-browser launches for ordinary headless browsing on every existing
-    # deployment, and the shell is the lighter of the two builds; preferring the
-    # headed one here would raise per-session memory everywhere to serve Bot
-    # Screen, which does not need it — tools/bot_desktop/browser.py::executable()
-    # rejects a headless-shell override (_is_headless_shell) and resolves the
-    # headed build on its own.
+    # Two ordered finds, not one with alternated -name predicates: that returns
+    # them in directory order, i.e. whichever Playwright unpacked first. Shell
+    # first, because this is what agent-browser launches for ordinary headless
+    # browsing everywhere and it is the lighter build; browser.py::env_for_agent
+    # swaps in the headed one for the agent while a screen is up.
     browser_bin=$(find "$PLAYWRIGHT_BROWSERS_PATH" -type f -executable \
         \( -name 'chrome-headless-shell' -o -name 'headless_shell' \) \
         2>/dev/null | head -n 1)
