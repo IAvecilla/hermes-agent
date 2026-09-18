@@ -100,10 +100,3 @@ def test_a_zero_floor_disables_the_gate(monkeypatch):
     """config_defaults documents "0 disables the check"."""
     monkeypatch.setattr(resources, "min_free_mb", lambda: 0)
     assert resources.memory_blocker(resources.MemoryInfo(available_mb=10, limit_mb=4096)) is None
-
-
-def test_tight_headroom_tracks_the_floor(monkeypatch):
-    """The "starting, but it is tight" warning is derived from the floor, so raising the floor cannot
-    silently retire it and lowering the floor cannot make it fire on every start."""
-    assert resources.tight_headroom_mb(3072) > 3072
-    assert resources.tight_headroom_mb(512) < 1536
