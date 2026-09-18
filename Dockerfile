@@ -223,28 +223,27 @@ COPY apps/shared/ apps/shared/
 # guards against a future regression if the source npm version changes.
 ENV npm_config_install_links=false
 
-# Two Chromium builds, deliberately:
-#   --only-shell   chrome-headless-shell, what the browser tool has always
-#                  driven headlessly. Smaller, no window code paths.
-#   (headed)       the full chromium build. chrome-headless-shell CANNOT open
-#                  a window, so Bot Screen's dock Browser icon and any
-#                  human-visible browser on the bot's X display need this one.
-#                  Both must be the SAME browser family sharing one
-#                  --user-data-dir, or a human who takes over logs into a jar
-#                  the bot never sees.
-# --with-deps only on the first install: it is an apt transaction for the shared
-# system libraries, and the second build reuses them. Keep both in one RUN so a
-# retry re-runs the pair together.
+# chrome-headless-shell: what the browser tool has always driven headlessly.
+# Smaller, no window code paths. --with-deps pulls the shared system libraries.
 RUN npm install --prefer-offline --no-audit --fetch-retries=5 && \
     for i in 1 2 3; do \
         npx playwright install --with-deps chromium --only-shell && break || \
         { [ "$i" = 3 ] && exit 1; echo "playwright headless-shell install failed (attempt $i); retrying in 10s"; sleep 10; }; \
     done && \
-    for i in 1 2 3; do \
-        npx playwright install chromium && break || \
-        { [ "$i" = 3 ] && exit 1; echo "playwright chromium install failed (attempt $i); retrying in 10s"; sleep 10; }; \
-    done && \
     npm cache clean --force
+
+# The full headed chromium, gated with the desktop packages: chrome-headless-shell
+# CANNOT open a window, so Bot Screen's dock Browser icon needs this build. Same
+# Chromium family as the shell, so the agent and the human share one
+# --user-data-dir without a version mismatch. No --with-deps: the system libraries
+# are already installed above. Gated because a build without a desktop has nothing
+# to show a window on, and this is a few hundred MB.
+RUN if [ "$HERMES_BOT_DESKTOP" = "1" ]; then \
+        for i in 1 2 3; do \
+            npx playwright install chromium && break || \
+            { [ "$i" = 3 ] && exit 1; echo "playwright chromium install failed (attempt $i); retrying in 10s"; sleep 10; }; \
+        done; \
+    fi
 
 # ---------- Photon iMessage sidecar deps (baked, NS-606) ----------
 # The photon plugin's Node sidecar needs its own node_modules

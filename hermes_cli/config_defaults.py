@@ -2316,7 +2316,7 @@ DEFAULT_CONFIG = {
         # whichever is tighter. Xvnc + Xfce idle at ~220 MB and a takeover's browser adds 0.5-1 GB, so a
         # screen with one page runs past 1 GB; the kernel OOM killer picks its victim by score, so on a
         # small instance the loser is the dashboard or the gateway rather than the desktop. 0 disables the
-        # check. HERMES_BOT_DESKTOP_MIN_FREE_MEMORY_MB overrides it where templating a config file is awkward.
+        # check.
         "min_free_memory_mb": 1536,
         # Stop a screen nobody has used (no computer_use action, browser spawn, viewer or takeover) for this
         # long; it restarts on the next use. Idle Xvnc + Xfce hold ~220 MB, an abandoned browser far more.

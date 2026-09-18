@@ -76,9 +76,8 @@ reverse proxy's access log may record an already-spent ticket.
 
   Before starting a screen, Hermes checks that the host — or its container
   cgroup, whichever is tighter — has `bot_desktop.min_free_memory_mb` free
-  (default 1536; `HERMES_BOT_DESKTOP_MIN_FREE_MEMORY_MB` overrides it where
-  templating a config file is awkward, and `0` from either source disables the
-  check). Below that the pane shows why in place of **Start screen** and
+  (default 1536; `0` disables the check). Below that the pane shows why in place
+  of **Start screen** and
   `hermes computer-use screen start` refuses; a screen already running is never
   taken down by this check. A screen nobody uses is stopped after
   `bot_desktop.idle_stop_minutes` (default 30) and comes back on the next use, so

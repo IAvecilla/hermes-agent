@@ -294,3 +294,65 @@ def test_allocation_lock_is_released_once_xvnc_claims_the_number(in_process_runt
     t.join()
     assert st.running
     assert seen.get("free") is True, "allocation lock still held after Xvnc wrote its X lock"
+
+
+def _startable_host(monkeypatch, tmp_path, *, running=False):
+    """A Linux host with the packages present, so only the checks under test can block a start."""
+    from tools.bot_desktop import resources
+    monkeypatch.setattr(runtime, "is_supported_host", lambda: True)
+    monkeypatch.setattr(runtime, "missing_binaries", lambda: [])
+    monkeypatch.setattr(runtime, "state_dir", lambda: tmp_path / "bd")
+    monkeypatch.setattr(runtime, "_launcher_pid", lambda: 4242 if running else None)
+    monkeypatch.setattr(runtime, "published_env", lambda: {"DISPLAY": ":7"} if running else {})
+    monkeypatch.setattr(runtime, "_reap_orphaned_server", lambda sd: None)
+    monkeypatch.setattr(resources, "min_free_mb", lambda: 1536)
+    monkeypatch.setattr(resources, "memory_info",
+                        lambda: resources.MemoryInfo(available_mb=400, limit_mb=4096))
+    spawned: list = []
+    monkeypatch.setattr(runtime, "_spawn_and_wait", lambda *a, **k: spawned.append(a))
+    return spawned
+
+
+def test_a_running_desktop_is_never_refused_for_the_memory_it_is_using(tmp_path, monkeypatch):
+    """start() is idempotent. The gate guards the allocation, not the session: a desktop that is already
+    up is itself what is consuming the memory, so checking before the running-check made Start fail on a
+    perfectly healthy screen."""
+    _startable_host(monkeypatch, tmp_path, running=True)
+    runtime.start()  # returns status(); must not raise about headroom
+
+
+def test_a_root_host_without_a_package_manager_is_told_the_truth(tmp_path, monkeypatch):
+    """Alpine/NixOS/distroless as root: installable() is False for a reason that has nothing to do with
+    privilege, so the message must not blame sudo or point at the Docker image."""
+    _startable_host(monkeypatch, tmp_path)
+    monkeypatch.setattr(runtime, "missing_binaries", lambda: ["Xvnc"])
+    monkeypatch.setattr(runtime, "package_manager", lambda: None)
+    monkeypatch.setattr(runtime, "is_root", lambda: True)
+    assert runtime.installable() is False
+    with pytest.raises(RuntimeError) as excinfo:
+        runtime.start()
+    message = str(excinfo.value)
+    assert "package manager" in message
+    assert "unprivileged" not in message and "sudo" not in message, f"wrong diagnosis: {message}"
+
+
+def test_an_unprivileged_host_is_pointed_at_the_image(tmp_path, monkeypatch):
+    """The published image: a package manager exists but there is no way to reach root."""
+    _startable_host(monkeypatch, tmp_path)
+    monkeypatch.setattr(runtime, "missing_binaries", lambda: ["Xvnc"])
+    monkeypatch.setattr(runtime, "package_manager", lambda: "apt")
+    monkeypatch.setattr(runtime, "is_root", lambda: False)
+    monkeypatch.setattr(runtime.shutil, "which", lambda name: None if name == "sudo" else "/usr/bin/" + name)
+    assert runtime.installable() is False
+    with pytest.raises(RuntimeError, match="baked in"):
+        runtime.start()
+
+
+def test_a_host_that_can_install_gets_the_command(tmp_path, monkeypatch):
+    """The branch that used to be unreachable behind an `or` fallback."""
+    _startable_host(monkeypatch, tmp_path)
+    monkeypatch.setattr(runtime, "missing_binaries", lambda: ["Xvnc"])
+    monkeypatch.setattr(runtime, "package_manager", lambda: "apt")
+    monkeypatch.setattr(runtime, "is_root", lambda: True)
+    with pytest.raises(RuntimeError, match="tigervnc-standalone-server"):
+        runtime.start()

@@ -517,10 +517,11 @@ def start(*, wait_seconds: float = 15.0) -> DesktopStatus:
         if _launcher_pid() is not None and published_env().get("DISPLAY"):
             return status()
         from tools.bot_desktop import resources
+        floor = resources.min_free_mb()
         mem = resources.memory_info()
-        if (blocker := resources.memory_blocker(mem)) is not None:
+        if (blocker := resources.memory_blocker(mem, need=floor)) is not None:
             raise RuntimeError(blocker)
-        if mem.available_mb is not None and mem.available_mb < resources.tight_headroom_mb():
+        if mem.available_mb is not None and mem.available_mb < resources.tight_headroom_mb(floor):
             logger.warning(
                 "Bot Desktop starting with %d MB available; a browser with a few pages open can use most "
                 "of that.", mem.available_mb)

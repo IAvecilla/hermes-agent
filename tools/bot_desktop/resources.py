@@ -15,21 +15,15 @@ not 8 GB.
 
 from __future__ import annotations
 
-import logging
-import os
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Optional
-
-logger = logging.getLogger(__name__)
 
 _CGROUP_V2 = Path("/sys/fs/cgroup")
 _CGROUP_V1 = Path("/sys/fs/cgroup/memory")
 _MEMINFO = Path("/proc/meminfo")
 _MIB = 1024 * 1024
 DEFAULT_MIN_FREE_MB = 1536
-# Lets a hosted deployment set the floor per instance without templating a config file.
-ENV_MIN_FREE_MB = "HERMES_BOT_DESKTOP_MIN_FREE_MEMORY_MB"
 
 
 @dataclass
@@ -108,14 +102,8 @@ def memory_info() -> MemoryInfo:
 
 
 def min_free_mb() -> int:
-    """``bot_desktop.min_free_memory_mb``, overridden by :data:`ENV_MIN_FREE_MB` where templating a config
-    file is awkward. 0 from either source disables the gate."""
-    override = os.environ.get(ENV_MIN_FREE_MB, "").strip()
-    if override:
-        try:
-            return max(0, int(override))
-        except ValueError:
-            logger.warning("Ignoring non-numeric %s=%r", ENV_MIN_FREE_MB, override)
+    """``bot_desktop.min_free_memory_mb``; 0 disables the gate. A hosted deployment sets it in the
+    instance's config.yaml (or the managed overlay), not an env var."""
     from hermes_cli.config import load_config_readonly
     cfg = load_config_readonly().get("bot_desktop") or {}
     try:
@@ -131,10 +119,11 @@ def tight_headroom_mb(floor: Optional[int] = None) -> int:
     return floor + floor // 3
 
 
-def memory_blocker(info: Optional[MemoryInfo] = None) -> Optional[str]:
+def memory_blocker(info: Optional[MemoryInfo] = None, need: Optional[int] = None) -> Optional[str]:
     """Why the screen must not start now, or None. Unknown memory is not a blocker: a host we cannot
-    read is not a host we know to be small."""
-    need = min_free_mb()
+    read is not a host we know to be small. ``need`` lets a caller that also wants
+    :func:`tight_headroom_mb` read the floor once instead of loading the config twice."""
+    need = min_free_mb() if need is None else need
     if need == 0:
         return None
     info = info or memory_info()

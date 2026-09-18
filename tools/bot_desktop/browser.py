@@ -166,9 +166,20 @@ def _pid_alive(pid: int) -> bool:
 
 
 def env_for_agent(env: dict) -> dict:
-    """Pin agent-browser to the screen's browser identity unless the user pinned their own."""
+    """Pin agent-browser to the screen's browser identity unless the user pinned their own.
+
+    A headless-shell pin is replaced rather than kept. The official image's boot hook exports
+    ``AGENT_BROWSER_EXECUTABLE_PATH=<chrome-headless-shell>`` for ordinary headless browsing, and a plain
+    ``setdefault`` would leave the agent on that build while the dock's Browser icon runs the headed one —
+    two different binaries on one ``--user-data-dir``. Chromium's singleton then forwards the human's dock
+    launch into the agent's windowless process and no window ever appears. This function only runs while a
+    screen is up (see :func:`runtime.desktop_env`), so the heavier build is only pinned when it is the
+    whole point; everything else keeps the shell.
+    """
     env.setdefault("AGENT_BROWSER_PROFILE", str(profile_dir()))
     exe = executable()
     if exe:
-        env.setdefault("AGENT_BROWSER_EXECUTABLE_PATH", exe)
+        pinned = env.get("AGENT_BROWSER_EXECUTABLE_PATH", "").strip()
+        if not pinned or _is_headless_shell(pinned):
+            env["AGENT_BROWSER_EXECUTABLE_PATH"] = exe
     return env
