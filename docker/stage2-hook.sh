@@ -402,10 +402,26 @@ as_hermes mkdir -p \
 # owned by hermes and 0700 as the spec requires (dbus refuses a world-readable
 # runtime dir). Deliberately NOT under $HERMES_HOME: that volume is commonly
 # bind-mounted and sometimes shared with a host-side install.
+#
+# The parent is world-writable sticky /tmp and the name is predictable, and /tmp
+# survives `docker restart`, so this directory is the security boundary for
+# everything inside it — Bot Screen's display-allocation lock most of all. Guard
+# the symlink case like every other root chmod in this file, and force ownership
+# rather than assuming it: `usermod -u` above does not chown paths outside the
+# home dir, so a HERMES_UID remap otherwise leaves a 0700 directory belonging to
+# the OLD uid and every Xfce/dbus/lock open fails EACCES.
 if [ -n "${XDG_RUNTIME_DIR:-}" ]; then
-    as_hermes mkdir -p "$XDG_RUNTIME_DIR" 2>/dev/null || \
-        echo "[stage2] Warning: could not create XDG_RUNTIME_DIR $XDG_RUNTIME_DIR (continuing)"
-    chmod 0700 "$XDG_RUNTIME_DIR" 2>/dev/null || true
+    if refuse_symlinked_path "create" "$XDG_RUNTIME_DIR"; then
+        :
+    else
+        mkdir -p "$XDG_RUNTIME_DIR" 2>/dev/null || \
+            echo "[stage2] Warning: could not create XDG_RUNTIME_DIR $XDG_RUNTIME_DIR (continuing)"
+        if [ -d "$XDG_RUNTIME_DIR" ]; then
+            chown hermes:hermes "$XDG_RUNTIME_DIR" 2>/dev/null || \
+                echo "[stage2] Warning: could not chown XDG_RUNTIME_DIR $XDG_RUNTIME_DIR (rootless?)"
+            chmod 0700 "$XDG_RUNTIME_DIR" 2>/dev/null || true
+        fi
+    fi
 fi
 
 # --- Install-method stamp ---

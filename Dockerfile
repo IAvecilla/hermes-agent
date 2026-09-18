@@ -76,9 +76,20 @@ RUN apt-get -o Acquire::Retries=3 update && \
 # Bot Screen (opt-in): TigerVNC + the Xfce components + a headed chromium, so a
 # container that cannot run apt at run time (unprivileged user, no sudo — every
 # hosted instance) can still stream a desktop. ~550 MB. Nothing here starts at
-# boot; the layer costs no memory until a screen is started. Same package list
-# as tools/bot_desktop/runtime.py::PACKAGES["apt"].
+# boot; the layer costs no memory until a screen is started.
+#
+# PACKAGES["apt"] in tools/bot_desktop/runtime.py (what a self-hosted operator
+# installs by hand) plus apt `chromium`, so the dock's Browser icon has a headed
+# browser. tests/tools/test_dockerfile_bot_desktop_packages.py fails if the two
+# drift. Xvnc and the Xfce components all run fine unprivileged — Xvnc is a
+# userspace X server with no DRM/input device access, unlike Xorg on real
+# hardware — so only this build step needs root, nothing at run time does.
 #   docker build --build-arg HERMES_BOT_DESKTOP=1 .
+# .github/workflows/docker.yml passes =1, so the PUBLISHED image always carries
+# them: hosted sandboxes (Fly Machines, Azure container instances) pull a
+# prebuilt image and never run a build, so a build arg cannot reach them and
+# there is no run-time install path either (unprivileged user, no sudo,
+# read-only /opt/hermes). A plain `docker build .` still gets a lean image.
 ARG HERMES_BOT_DESKTOP=0
 RUN if [ "$HERMES_BOT_DESKTOP" = "1" ]; then \
         apt-get -o Acquire::Retries=3 update && \
@@ -310,37 +321,7 @@ COPY apps/shared/ apps/shared/
 RUN cd web && npm run build && \
     cd ../ui-tui && npm run build
 
-# ---------- Bot Screen desktop packages ----------
-# Bot Screen (per-profile Xfce desktop streamed to Hermes Desktop) needs an X
-# server and a window manager on the gateway host. On a self-hosted box the
-# operator installs them; the pane's "Install on host" button runs the same
-# apt/dnf/pacman command over sudo. NEITHER path exists in this image:
-# supervised services drop to the unprivileged `hermes` user
-# (`s6-setuidgid hermes`, UID 10000 by default), no `sudo` binary is
-# installed, and /opt/hermes is sealed read-only. A runtime install would also
-# land in the ephemeral container layer rather than the /opt/data volume, so it
-# would be re-downloaded on every container recreate. Baking the packages here
-# is therefore the ONLY way hosted/immutable deployments can offer the feature.
-#
-# Xvnc and the Xfce components all run fine unprivileged: Xvnc is a userspace X
-# server (no DRM/input device access, unlike Xorg on real hardware), so nothing
-# below needs root at runtime. Only this build step does.
-#
-# The list mirrors PACKAGES["apt"] in tools/bot_desktop/runtime.py, which is
-# what the CLI and the install card would run by hand;
-# tests/tools/test_dockerfile_bot_desktop_packages.py fails the build if the
-# two drift apart. Deliberately NOT the `xfce4` metapackage: a headless desktop
-# has no use for a screensaver, a power manager or a polkit agent.
-#
-# Placed after the npm/Playwright/uv layers so editing this list rebuilds one
-# apt layer instead of invalidating ~5 minutes of dependency work below it.
-RUN apt-get -o Acquire::Retries=3 update && \
-    apt-get -o Acquire::Retries=3 install -y --no-install-recommends \
-    tigervnc-standalone-server xfce4-panel xfwm4 xfdesktop4 xfce4-settings \
-    xfce4-terminal dbus-x11 x11-xserver-utils x11-utils x11-xkb-utils xauth \
-    fonts-dejavu-core && \
-    rm -rf /var/lib/apt/lists/*
-
+# ---------- Bot Screen X socket directory ----------
 # X servers put their socket in /tmp/.X11-unix and their lock in /tmp/.X<n>-lock.
 # Debian's /tmp is already 1777 so the unprivileged runtime user can create the
 # directory itself, but pre-creating it with the sticky bit keeps ownership

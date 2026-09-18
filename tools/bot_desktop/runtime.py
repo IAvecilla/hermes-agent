@@ -282,8 +282,11 @@ def _kill_group_then_wait(pgid: Optional[int], pid: int, grace: float = 2.0) -> 
     _reap_if_ours()
 
 
-# Host-wide (every profile allocates from one band), so it lives outside any profile home — but not in
-# world-writable /tmp, where a predictable name lets another local user pre-create or squat the file.
+# Host-wide (every profile allocates from one band), so it lives outside any profile home. The file must
+# not be squattable: a predictable name directly in world-writable /tmp would let another local user
+# pre-create it. XDG_RUNTIME_DIR is the boundary that keeps it safe — logind makes /run/user/<uid> 0700,
+# and in containers (which have no logind) the image points it at a container-scoped path that
+# docker/stage2-hook.sh creates 0700 and owned by the runtime user, refusing to follow a symlink there.
 _ALLOC_LOCK = Path(os.environ.get("XDG_RUNTIME_DIR") or Path.home() / ".cache") / "hermes-bot-desktop-alloc.lock"
 
 
@@ -477,110 +480,8 @@ def _profile_name() -> str:
 # point of the feature, so the desktop is not something to squeeze under a budget. What we can do is refuse
 # to start when there is not enough headroom, because the kernel OOM killer picks a victim by score, not by
 # who caused the pressure: on a small instance it takes out the dashboard or the gateway and the desktop
-# survives, which surfaces as an unrelated outage nobody traces back to here.
-_MIN_FREE_MEMORY_MB = 1536   # refuse below this much headroom
-_WARN_FREE_MEMORY_MB = 2048  # start, but say it is tight
-_CGROUP_ROOT = Path("/sys/fs/cgroup")  # tests point it at a scratch dir
-_MEMINFO = Path("/proc/meminfo")       # same
-
-
-def _read_int(path: Path) -> Optional[int]:
-    try:
-        return int(path.read_text(encoding="utf-8").strip())
-    except Exception:
-        return None
-
-
-def _cgroup_free_mb() -> Optional[int]:
-    """Headroom against the cgroup's own limit, or None when unlimited/unreadable.
-
-    The limit is what the OOM killer enforces, and ``/proc/meminfo`` does not report it: on a container host
-    meminfo describes the NODE, so a headroom check there is meaningless (it happens to be right on a Fly
-    machine only because those are microVMs). Cgroup v2 layout, which is what current Docker/containerd give.
-
-    ``memory.current`` counts reclaimable page cache, which is why a container reads several hundred MB above
-    idle right after a desktop stops even though every process is gone. Charging that against the limit would
-    make the check tighten the longer an instance stays up and refuse starts that would have been fine, so we
-    subtract ``inactive_file`` (the working-set convention kubelet uses).
-    """
-    root = _CGROUP_ROOT
-    try:
-        limit_raw = (root / "memory.max").read_text(encoding="utf-8").strip()
-    except Exception:
-        return None
-    if limit_raw == "max":  # no limit set: the host's own free memory is the real answer
-        return None
-    try:
-        limit = int(limit_raw)
-    except ValueError:
-        return None
-    current = _read_int(root / "memory.current")
-    if current is None:
-        return None
-    inactive_file = 0
-    try:
-        for line in (root / "memory.stat").read_text(encoding="utf-8").splitlines():
-            if line.startswith("inactive_file "):
-                inactive_file = int(line.split()[1])
-                break
-    except Exception:
-        pass
-    working_set = max(current - inactive_file, 0)
-    return max(limit - working_set, 0) // (1024 * 1024)
-
-
-def _meminfo_free_mb() -> Optional[int]:
-    """MemAvailable, the fallback for an unlimited cgroup or cgroup v1. None when unreadable."""
-    try:
-        for line in _MEMINFO.read_text(encoding="utf-8").splitlines():
-            if line.startswith("MemAvailable:"):
-                return int(line.split()[1]) // 1024
-    except Exception:
-        return None
-    return None
-
-
-def free_memory_mb() -> Optional[int]:
-    """Memory a desktop could actually use here. None when nothing on this host can tell us."""
-    free = _cgroup_free_mb()
-    return free if free is not None else _meminfo_free_mb()
-
-
-def _min_free_memory_mb() -> int:
-    """``bot_desktop.min_free_memory_mb``, overridable by env so a hosted deployment can set it per instance
-    without templating a config file. 0 or negative disables the check."""
-    override = os.environ.get("HERMES_BOT_DESKTOP_MIN_FREE_MEMORY_MB", "").strip()
-    if not override:
-        from hermes_cli.config import load_config_readonly
-        cfg = load_config_readonly().get("bot_desktop") or {}
-        configured = cfg.get("min_free_memory_mb")
-        if configured is None:
-            return _MIN_FREE_MEMORY_MB
-        override = str(configured).strip()
-    try:
-        return int(override)
-    except (TypeError, ValueError):
-        logger.warning("Ignoring non-numeric bot_desktop.min_free_memory_mb=%r", override)
-        return _MIN_FREE_MEMORY_MB
-
-
-def _refuse_below_memory_floor() -> None:
-    """Raise when this host has too little headroom for a desktop plus the browser that is the point of it."""
-    floor = _min_free_memory_mb()
-    if floor <= 0:
-        return
-    free = free_memory_mb()
-    if free is None:  # nothing readable: do not stand in the way of a host we cannot measure
-        return
-    if free < floor:
-        raise RuntimeError(
-            f"Bot Desktop needs about {floor} MB of free memory to start and this host has {free} MB. "
-            "A desktop plus the bot's browser runs past 1 GB, so starting here would likely get another "
-            "process OOM-killed instead. Give the instance more memory, or lower "
-            "bot_desktop.min_free_memory_mb if you accept the risk.")
-    if free < _WARN_FREE_MEMORY_MB:
-        logger.warning(
-            "Bot Desktop starting with %d MB free; a browser with a few pages open can use most of that.", free)
+# survives, which surfaces as an unrelated outage nobody traces back to here. The measurement and the floor
+# both live in ``resources`` so ``start()`` and ``status()`` cannot disagree about them.
 
 
 def start(*, wait_seconds: float = 15.0) -> DesktopStatus:
@@ -603,7 +504,6 @@ def start(*, wait_seconds: float = 15.0) -> DesktopStatus:
                 "packages have to be baked in, so this needs a newer image rather than an install.")
         hint = install_command() or "install TigerVNC (Xvnc) and the Xfce core components"
         raise RuntimeError(f"Bot Desktop needs {', '.join(missing)} on the gateway host. Install: {hint}")
-    _refuse_below_memory_floor()
     sd = state_dir()
     sd.mkdir(parents=True, exist_ok=True)
     os.chmod(sd, 0o700)
@@ -611,8 +511,13 @@ def start(*, wait_seconds: float = 15.0) -> DesktopStatus:
         if _launcher_pid() is not None and published_env().get("DISPLAY"):
             return status()
         from tools.bot_desktop import resources
-        if (blocker := resources.memory_blocker()) is not None:
+        mem = resources.memory_info()
+        if (blocker := resources.memory_blocker(mem)) is not None:
             raise RuntimeError(blocker)
+        if mem.available_mb is not None and mem.available_mb < resources.tight_headroom_mb():
+            logger.warning(
+                "Bot Desktop starting with %d MB available; a browser with a few pages open can use most "
+                "of that.", mem.available_mb)
         if _launcher_pid() is None:
             _reap_orphaned_server(sd)
         _ALLOC_LOCK.parent.mkdir(parents=True, exist_ok=True, mode=0o700)

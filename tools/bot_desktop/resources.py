@@ -15,15 +15,21 @@ not 8 GB.
 
 from __future__ import annotations
 
+import logging
+import os
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Optional
+
+logger = logging.getLogger(__name__)
 
 _CGROUP_V2 = Path("/sys/fs/cgroup")
 _CGROUP_V1 = Path("/sys/fs/cgroup/memory")
 _MEMINFO = Path("/proc/meminfo")
 _MIB = 1024 * 1024
 DEFAULT_MIN_FREE_MB = 1536
+# Lets a hosted deployment set the floor per instance without templating a config file.
+ENV_MIN_FREE_MB = "HERMES_BOT_DESKTOP_MIN_FREE_MEMORY_MB"
 
 
 @dataclass
@@ -54,14 +60,37 @@ def _meminfo() -> dict[str, int]:
     return out
 
 
+def _stat_value(path: Path, key: str) -> Optional[int]:
+    """One ``<key> <bytes>`` line out of a cgroup ``memory.stat``."""
+    try:
+        for line in path.read_text(encoding="utf-8").splitlines():
+            name, _, rest = line.partition(" ")
+            if name == key:
+                return int(rest.strip())
+    except (OSError, ValueError):
+        return None
+    return None
+
+
 def _cgroup_limit_and_usage() -> tuple[Optional[int], Optional[int]]:
+    """The cgroup's limit and its *working set* — usage minus reclaimable page cache.
+
+    ``memory.current`` counts page cache, which is why a container still reads several hundred MB above
+    idle right after a desktop stops with every process gone. Charging that against the limit would make
+    this gate tighten the longer an instance stays up and refuse starts that would have been fine, so we
+    subtract ``inactive_file``, the working-set convention kubelet uses.
+    """
     limit = _read_int(_CGROUP_V2 / "memory.max")
     usage = _read_int(_CGROUP_V2 / "memory.current")
+    cache = _stat_value(_CGROUP_V2 / "memory.stat", "inactive_file")
     if limit is None and usage is None:
         limit = _read_int(_CGROUP_V1 / "memory.limit_in_bytes")
         usage = _read_int(_CGROUP_V1 / "memory.usage_in_bytes")
+        cache = _stat_value(_CGROUP_V1 / "memory.stat", "total_inactive_file")
         if limit is not None and limit >= 1 << 60:  # v1 "unlimited" is a huge sentinel
             limit = None
+    if usage is not None and cache:
+        usage = max(usage - cache, 0)
     return limit, usage
 
 
@@ -79,12 +108,27 @@ def memory_info() -> MemoryInfo:
 
 
 def min_free_mb() -> int:
+    """``bot_desktop.min_free_memory_mb``, overridden by :data:`ENV_MIN_FREE_MB` where templating a config
+    file is awkward. 0 from either source disables the gate."""
+    override = os.environ.get(ENV_MIN_FREE_MB, "").strip()
+    if override:
+        try:
+            return max(0, int(override))
+        except ValueError:
+            logger.warning("Ignoring non-numeric %s=%r", ENV_MIN_FREE_MB, override)
     from hermes_cli.config import load_config_readonly
     cfg = load_config_readonly().get("bot_desktop") or {}
     try:
         return max(0, int(cfg.get("min_free_memory_mb", DEFAULT_MIN_FREE_MB)))
     except (TypeError, ValueError):
         return DEFAULT_MIN_FREE_MB
+
+
+def tight_headroom_mb(floor: Optional[int] = None) -> int:
+    """Above the floor but below this, a start is allowed and logged: the desktop fits, a few browser tabs
+    would not. Derived from the floor so raising the floor cannot silently retire the warning."""
+    floor = min_free_mb() if floor is None else floor
+    return floor + floor // 3
 
 
 def memory_blocker(info: Optional[MemoryInfo] = None) -> Optional[str]:
