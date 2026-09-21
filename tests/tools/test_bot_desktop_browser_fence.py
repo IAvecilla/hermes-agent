@@ -4,6 +4,7 @@ dispatched, and a command whose run crossed a takeover loses its result."""
 from __future__ import annotations
 
 import json
+import subprocess
 
 import pytest
 
@@ -36,6 +37,57 @@ def _wire(monkeypatch, commands):
 
     monkeypatch.setattr(session, "_spawn_and_collect", spawn)
     return browser, session
+
+
+def _wire_browser_exec(monkeypatch, run_cli):
+    """Route browser_exec through local Chromium without starting a real browser."""
+    from tools import browser_tool_cloud as cloud
+    from tools import browser_tool_session as session
+    from tools import browser_use_cli as browser_use
+
+    monkeypatch.setattr(browser_use, "_find_cli", lambda: ["browser-use"])
+    monkeypatch.setattr(browser_use, "_base_subprocess_env", lambda: {})
+    monkeypatch.setattr(browser_use, "_real_profile_consented", lambda: False)
+    monkeypatch.setattr(browser_use, "_resolve_lightpanda_cdp", lambda *a: None)
+    monkeypatch.setattr("tools.browser_tool_cdp._get_cdp_override", lambda: "")
+    monkeypatch.setattr("tools.browser_tool._get_open_command_timeout", lambda **_kw: 5)
+    monkeypatch.setattr(cloud, "_get_cloud_provider", lambda: None)
+    monkeypatch.setattr(session, "_run_browser_command", lambda *_a, **_kw: {
+        "success": True, "data": {"cdpUrl": "http://127.0.0.1:9222"}})
+    monkeypatch.setattr(browser_use, "_attach_vault_supervisor", lambda *a: None)
+    monkeypatch.setattr(browser_use, "_run_cli_killing_process_group", run_cli)
+    return browser_use
+
+
+def test_browser_exec_is_fenced_while_human_controls_shared_browser(monkeypatch):
+    dispatched: list[str] = []
+
+    def run_cli(*_args):
+        dispatched.append("browser-use")
+        return subprocess.CompletedProcess([], 0, "WHAT-THE-HUMAN-TYPED", "")
+
+    browser_use = _wire_browser_exec(monkeypatch, run_cli)
+    lease.acquire("human-viewer")
+    raw = browser_use.browser_exec("print(page_info())", task_id="review")
+    assert isinstance(raw, str)
+    result = json.loads(raw)
+    assert dispatched == [], "human holds the lease, yet browser_exec was dispatched"
+    assert "WHAT-THE-HUMAN-TYPED" not in raw
+    assert result.get("code") == "human_has_control"
+
+
+def test_browser_exec_result_crossing_a_takeover_is_discarded(monkeypatch):
+    def run_cli(*_args):
+        lease.acquire("human-viewer")
+        lease.release("human-viewer")
+        return subprocess.CompletedProcess([], 0, "WHAT-THE-HUMAN-TYPED", "")
+
+    browser_use = _wire_browser_exec(monkeypatch, run_cli)
+    raw = browser_use.browser_exec("print(page_info())", task_id="review")
+    assert isinstance(raw, str)
+    result = json.loads(raw)
+    assert "WHAT-THE-HUMAN-TYPED" not in raw
+    assert result.get("code") == "human_has_control"
 
 
 def test_browser_click_is_fenced_while_human_controls_shared_browser(monkeypatch):
@@ -129,3 +181,26 @@ def test_vault_page_operations_respect_the_human_lease(monkeypatch):
     assert touched == [], "no vault page access while the human holds the screen"
     lease.release("human")
     assert json.loads(vault._handle_vault_fill({"handle": "vault_x"}, task_id="default"))["success"] is True
+
+
+def test_secret_write_re_admits_after_a_takeover_during_the_code_prompt(monkeypatch):
+    """`enter_code` blocks on the user's code INSIDE the handler fence. A takeover during that wait must
+    refuse the write itself: the outer fence only discards the result afterwards, and by then the code is
+    already in the page the human is typing into."""
+    from tools import browser_tool as browser
+    from tools import browser_vault_tool as vault
+
+    browser._active_sessions["default"] = {"session_name": "review", "cdp_url": None, "features": {"local": True}}
+    evaluated = []
+
+    class Sup:
+        def evaluate_runtime(self, expr):
+            evaluated.append(expr)
+            return {"ok": True, "result": "{}"}
+
+    monkeypatch.setattr(vault, "_ensure_supervisor", lambda tid: Sup())
+    assert vault._eval_js_secret("default", "fill()")["success"] is True  # agent holds: writes
+    lease.acquire("human")  # takeover while the prompt was open
+    res = vault._eval_js_secret("default", "fill()")
+    assert res["success"] is False and res["error_type"] == "human_has_control"
+    assert evaluated == ["fill()"], "the credential must not reach the page under a human lease"

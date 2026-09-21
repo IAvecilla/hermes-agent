@@ -6,6 +6,7 @@
  */
 
 import { act, render, waitFor } from '@testing-library/react'
+import type { ReactNode } from 'react'
 import { afterEach, beforeEach, expect, it, vi } from 'vitest'
 
 import type { DisplayStatus } from './screen-connection'
@@ -20,14 +21,17 @@ vi.mock('@hermes/plugin-sdk', async () => {
     Button: ({ children, ...props }: React.ButtonHTMLAttributes<HTMLButtonElement>) => <button {...props}>{children}</button>,
     Codicon: () => null,
     GlyphSpinner: () => null,
+    Tip: ({ children }: { children: ReactNode }) => <>{children}</>,
     EmptyState: () => null,
     useValue: useStore,
     host: { onEvent: onGatewayEvent }
   }
 })
-vi.mock('./routing', () => ({
-  botConnectionRoute: () => ({ connectionId: 'host-a', profile: 'ops', targetProfile: 'ops' })
-}))
+vi.mock('./routing', () => {
+  const route = { connectionId: 'host-a', mode: 'remote', profile: 'ops', targetProfile: 'ops' }
+
+  return { botConnectionRoute: () => route, resolveBotConnectionRoute: () => ({ status: 'resolved', route }) }
+})
 vi.mock('./data', () => ({ botSelectionKey: (bot: RosterRow) => bot.name }))
 vi.mock('./i18n', () => ({
   useBots: () => ({

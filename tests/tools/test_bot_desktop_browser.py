@@ -6,6 +6,9 @@ from __future__ import annotations
 
 import os
 import socket
+from pathlib import Path
+
+import pytest
 
 from tools.bot_desktop import browser, runtime
 
@@ -29,6 +32,24 @@ def test_user_pinned_profile_wins(tmp_path, monkeypatch):
     monkeypatch.setenv("AGENT_BROWSER_PROFILE", str(tmp_path / "mine"))
     monkeypatch.setattr(runtime, "state_dir", lambda: tmp_path / "bot-desktop")
     assert browser.profile_dir() == tmp_path / "mine"
+
+
+def test_pinned_profile_honours_tilde_and_resolves_relative_paths_against_hermes_home(tmp_path, monkeypatch):
+    """Regression for #110029: the docs say setting AGENT_BROWSER_PROFILE pins your own user-data-dir, but only
+    an absolute value was honoured — `~/pin` and `pin` silently fell back to the default and the human's dock
+    browser and the agent's browser could end up on different jars. A relative path is anchored where the rest
+    of this profile's screen state lives (its HERMES_HOME), so two profiles never share one 'pin'."""
+    home = tmp_path / "hermes-home"
+    monkeypatch.setenv("HERMES_HOME", str(home))
+    monkeypatch.setattr(runtime, "get_hermes_home", lambda: home)
+    monkeypatch.setattr(Path, "home", lambda: tmp_path / "user")
+    monkeypatch.setenv("HOME", str(tmp_path / "user"))
+
+    monkeypatch.setenv("AGENT_BROWSER_PROFILE", "~/pin")
+    assert browser.profile_dir() == tmp_path / "user" / "pin"
+    monkeypatch.setenv("AGENT_BROWSER_PROFILE", "pin")
+    assert browser.profile_dir() == home / "pin"
+    assert browser.env_for_agent({})["AGENT_BROWSER_PROFILE"] == str(home / "pin"), "agent-browser gets the resolved path"
 
 
 def test_dock_browser_advertises_a_devtools_port():
@@ -176,7 +197,10 @@ def test_root_dock_browser_starts_with_the_same_sandbox_args_as_the_agents_brows
 
 def test_status_reports_the_headed_browser_or_its_absence(monkeypatch):
     """The official image ships only chromium_headless_shell: executable() is None and the dock silently
-    has no Browser icon. Status must say so instead of leaving the pane to guess."""
+    has no Browser icon. Status must say so instead of leaving the pane to guess. The subject is the
+    browser field, not host policy: status() gates it on is_supported_host(), which is pinned True so the
+    test means the same thing on every CI lane."""
+    monkeypatch.setattr(runtime, "is_supported_host", lambda: True)
     monkeypatch.setattr(runtime, "_launcher_pid", lambda: None)
     monkeypatch.setattr(runtime, "published_env", lambda: {})
     monkeypatch.setattr(runtime, "geometry", lambda: "1440x900")
@@ -215,6 +239,82 @@ def test_headless_shell_override_is_not_a_headed_browser(tmp_path, monkeypatch):
     _, sys_exe = _install_browsers(tmp_path / "with-sys", monkeypatch, playwright=False, system=True)
     monkeypatch.setenv("AGENT_BROWSER_EXECUTABLE_PATH", str(shell))
     assert browser.executable() == sys_exe  # a real headed browser elsewhere still wins over the override
+
+
+@pytest.mark.parametrize("engine, headed, starts", [("chrome", True, 1), ("chrome", False, 0), ("lightpanda", True, 0)])
+def test_headed_chromium_spawn_asks_the_screen_to_start_but_the_env_builder_never_does(tmp_path, monkeypatch, engine, headed, starts):
+    """Regression for #110050 at the right boundary: a real browser command that forks a headed Chromium daemon
+    starts the profile's screen (bot_desktop.auto_start) like computer_use dispatch does; `_build_browser_env()`
+    itself stays pure — it also serves the npx cache warmer, the Chromium auto-installer and the Lightpanda
+    engine, none of which may block on Xvnc+Xfce coming up."""
+    from tools import browser_tool as bt
+    from tools import browser_tool_cloud as cloud
+    from tools import browser_tool_session as session
+
+    calls: list = []
+    monkeypatch.setattr(runtime, "ensure_started_for_tool", lambda: calls.append(1))
+    monkeypatch.setattr(runtime, "published_env", lambda: {})
+    monkeypatch.setattr(cloud, "_is_headed_mode", lambda: headed)
+    bt._build_browser_env()
+    assert calls == []
+
+    class _Done:
+        returncode = 0
+        def wait(self, timeout=None): return 0
+    def _fake_popen(argv, env, socket_dir, tag, stdin_payload=None):
+        for slot in ("stdout", "stderr"):
+            Path(socket_dir, f"_{slot}_{tag}").write_text("{}" if slot == "stdout" else "")
+        return _Done()
+    monkeypatch.setattr(session, "_popen_agent_browser", _fake_popen)
+    monkeypatch.setattr(session, "_prepare_session_socket_dir", lambda name: str(tmp_path))
+    session._spawn_and_collect("t", {"session_name": "h_x"}, ["agent-browser"], "open", engine, 5)
+    assert len(calls) == starts
+
+
+def test_janitor_keeps_the_shared_browser_alive_while_a_human_holds_the_lease(monkeypatch):
+    """#110064: the agent goes idle BECAUSE the human took over to log in; the janitor must count the human's
+    lease as activity for the shared local browser, and reap it again once the lease is handed back."""
+    from tools import browser_tool_lifecycle as lifecycle, browser_tool_session as session
+    from tools.bot_desktop import lease
+
+    monkeypatch.setattr(runtime, "published_env", lambda: {"DISPLAY": ":37"})
+    holder = {"human": True}
+    monkeypatch.setattr(lease, "human_holds", lambda *a, **k: holder["human"])
+    reaped: list = []
+    monkeypatch.setattr(lifecycle, "cleanup_browser", lambda task_id: reaped.append(task_id))
+    monkeypatch.setattr(lifecycle._bt, "BROWSER_SESSION_INACTIVITY_TIMEOUT", 1)
+    monkeypatch.setattr(lifecycle._bt, "_active_sessions", {
+        "bot": {"session_name": "h_bot", "features": {"local": True}},
+        "cloud": {"session_name": "c_1", "bb_session_id": "bb", "features": {}},
+    })
+    monkeypatch.setattr(lifecycle._bt, "_session_last_activity", {"bot": 0.0, "cloud": 0.0})
+    monkeypatch.setattr(lifecycle._bt, "_session_owner_homes", {})
+
+    lifecycle._cleanup_inactive_browser_sessions()
+    assert reaped == ["cloud"], "only the browser the human is not typing into may be reaped"
+    assert lifecycle._bt._session_last_activity["bot"] > 0, "the human's lease refreshed the bot browser's activity"
+
+    holder["human"] = False
+    lifecycle._bt._session_last_activity["bot"] = 0.0
+    lifecycle._cleanup_inactive_browser_sessions()
+    assert reaped == ["cloud", "bot"]
+    assert session.human_holds_shared_browser({"features": {"local": True}}) is False
+
+
+def test_daemon_idle_timer_defers_to_the_janitor_only_for_the_shared_headed_browser(monkeypatch):
+    """The agent-browser daemon cannot see the lease, so on the Bot Desktop its self-termination timer steps
+    back and the lease-aware janitor owns the browser's lifetime; headless browsing keeps the mirror."""
+    from tools import browser_tool_session as session
+
+    monkeypatch.setattr(session._bt, "BROWSER_SESSION_INACTIVITY_TIMEOUT", 120)
+    monkeypatch.setattr(runtime, "published_env", lambda: {"DISPLAY": ":37"})
+    monkeypatch.setattr(session._cloud, "_is_headed_mode", lambda: True)
+    assert session._daemon_idle_timeout_seconds() > 120
+    monkeypatch.setattr(session._cloud, "_is_headed_mode", lambda: False)
+    assert session._daemon_idle_timeout_seconds() == 120
+    monkeypatch.setattr(session._cloud, "_is_headed_mode", lambda: True)
+    monkeypatch.setattr(runtime, "published_env", lambda: {})
+    assert session._daemon_idle_timeout_seconds() == 120
 
 
 def test_a_headless_shell_pin_is_replaced_while_a_screen_is_up(tmp_path, monkeypatch):

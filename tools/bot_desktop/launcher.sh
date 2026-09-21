@@ -44,9 +44,10 @@ export XAUTHORITY="$HERMES_BD_XAUTH"
 # running server (another profile may have taken this number) and is never touched — Xvnc then
 # fails to start on it and runtime.py reports that instead of us disrupting the other desktop.
 rm -f "$HERMES_BD_SOCKET"
+# no-tmp: ok — the X11 protocol fixes its lock and socket under /tmp; this is not our scratch dir
 xlock="/tmp/.X${HERMES_BD_DISPLAY_NUM}-lock"
 if [[ -e "$xlock" ]] && ! kill -0 "$(tr -d ' ' < "$xlock" 2>/dev/null)" 2>/dev/null; then
-  rm -f "$xlock" "/tmp/.X11-unix/X${HERMES_BD_DISPLAY_NUM}"
+  rm -f "$xlock" "/tmp/.X11-unix/X${HERMES_BD_DISPLAY_NUM}"  # no-tmp: ok — X11 display socket, fixed by the protocol
 fi
 : > "$XAUTHORITY"; chmod 600 "$XAUTHORITY"
 # The cookie goes in on stdin, not argv: a command line is readable by every local user via ps.
@@ -227,6 +228,19 @@ done
 # seeded once (the human may have rearranged it), but this one line is ours and must follow the profile:
 # after `hermes profile rename` the old path would open a browser with an empty, unshared cookie jar.
 L="$XDG_CONFIG_HOME/xfce4/panel"
+# Profiles seeded before the marker existed have the launcher but no `.hermes-browser-launcher`; recover
+# it from our own Browser entry (hermes.desktop is ours by name) so their Exec= follows a rename too.
+if [[ -n "${HERMES_BD_BROWSER_EXEC:-}" && -n "${HERMES_BD_BROWSER_EXEC_LINE:-}" && ! -r "$L/.hermes-browser-launcher" ]]; then
+  for d in "$L"/launcher-*/hermes.desktop; do
+    [[ -f "$d" ]] || continue
+    while IFS= read -r line; do
+      if [[ "$line" == "Name=Browser" ]]; then
+        bn="${d%/hermes.desktop}"; bn="${bn##*/launcher-}"
+        printf '%s\n' "$bn" > "$L/.hermes-browser-launcher"; break 2
+      fi
+    done < "$d"
+  done
+fi
 if [[ -n "${HERMES_BD_BROWSER_EXEC:-}" && -n "${HERMES_BD_BROWSER_EXEC_LINE:-}" && -r "$L/.hermes-browser-launcher" ]]; then
   bn="$(cat "$L/.hermes-browser-launcher")"
   d="$L/launcher-$bn/hermes.desktop"

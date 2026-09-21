@@ -5,6 +5,11 @@ The lease is the single truth shared by the RFB bridge (drops human input from n
 credential, so even screenshots are refused; fail closed rather than trusting the agent to pause
 itself) and the Desktop UI (Watch / Take over / Hand back).
 
+Scope: the lease is a TOOL-LEVEL fence, not a property of the X server. ``computer_use`` and the browser
+tools consult it; a process the agent starts by hand against the published ``DISPLAY``/``XAUTHORITY``
+(the ``terminal`` tool, a script) is inside the documented same-user boundary and is not stopped by it
+(bot-screen.md, "Threat model"; #110040).
+
 Authority lives ON DISK, ``<HERMES_HOME>/bot-desktop/lease.json`` under an fcntl lock, because the
 processes that must agree do not share memory: ``hermes serve`` (viewer bridge), the messaging
 gateway, a CLI turn and isolated workers all drive the same display. Every read goes to the file;
@@ -50,6 +55,17 @@ class Lease:
 
     def as_dict(self) -> Dict[str, object]:
         return asdict(self)
+
+
+def public_view(lease: Lease) -> Dict[str, object]:
+    """The lease as anything outside the gateway may see it (RPC results, the ``display.lease`` broadcast,
+    the CLI): the holder's viewer id is a capability — whoever presents it co-drives or releases the lease —
+    so it is replaced by a short hash the holder can match against its own id to know it is in control."""
+    import hashlib
+    d = lease.as_dict()
+    d["viewer_id"] = None
+    d["viewer_hash"] = hashlib.sha256(lease.viewer_id.encode()).hexdigest()[:12] if lease.viewer_id else None
+    return d
 
 
 _lock = threading.Condition()

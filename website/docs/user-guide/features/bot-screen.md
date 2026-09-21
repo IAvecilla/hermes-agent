@@ -23,8 +23,12 @@ and the control-lease file all belong to the gateway's OS user. Any process
 running as that user — another bot on the same host, and the bot's own
 `terminal` tool included — can reach them directly, bypassing the pane and the
 lease. The lease is a tool-level fence on `computer_use` and the browser tools,
-not an OS one. Running each bot as its own OS user is out of scope; if that
-isolation matters to you, put the bots on separate hosts. Two timing details
+not an OS one. One boundary is wider than the OS user: Chromium's DevTools
+port (the dock's Browser and every agent-browser launch advertise one on
+loopback so the agent can attach) is reachable by **any** local user on the
+host, and Chromium offers no per-user restriction for it. Running each bot as
+its own OS user is out of scope; if that isolation matters to you, or the host
+has untrusted local users, put the bots on separate hosts. Two timing details
 worth knowing: the WebSocket bridge caches its lease decision for up to 250 ms
 between re-reads of the lease file, so a takeover made by another process is
 enforced within that window (the bot's tool results are voided by the lease
@@ -125,9 +129,10 @@ Every bot's computer is one click away in three places of Hermes Desktop:
    The screen is **off by default** and nothing starts it for you: click
    **Start screen** in the pane, run `hermes computer-use screen start` on the
    host, or set `bot_desktop.auto_start: true` if you want a headless host to
-   start the screen by itself on the bot's first `computer_use` call (off so
-   that installing TigerVNC never yields a screen nobody asked for). A headed
-   browser opens on the screen once it is running.
+   start the screen by itself on the bot's first `computer_use` call or first
+   headed browser use (`browser.headed: true`) — off so that installing
+   TigerVNC never yields a screen nobody asked for. A headed browser opens on
+   the screen once it is running.
 2. The pane streams the bot's desktop. The chip in the header says who is in
    control: **Bot is in control** by default.
 3. Click **Take over**. The border turns red, your keyboard and mouse now drive
@@ -160,7 +165,9 @@ controller drops back to watching.
 While the screen runs, the bot's browser tool and the dock's **Browser** icon are
 the same browser: the Chromium agent-browser drives, with one persistent
 user-data-dir per bot (`<HERMES_HOME>/bot-desktop/browser-profile`; set
-`AGENT_BROWSER_PROFILE` to pin your own). Click Browser during a takeover and you
+`AGENT_BROWSER_PROFILE` to pin your own — `~` expands, and a relative path such
+as `pin` resolves against that bot's `HERMES_HOME`, i.e. `<HERMES_HOME>/pin`).
+Click Browser during a takeover and you
 are in the bot's own windows and cookie jar; what you sign in to is what the bot
 uses afterwards and in every later session, until the site expires the login.
 Set `browser.headed: true` so the bot's own browsing is visible on the screen too.
@@ -205,7 +212,7 @@ hermes -p research computer-use screen start   # another bot's screen
 ```yaml
 bot_desktop:
   geometry: "1440x900"      # screen size; the viewer scales to fit the pane
-  auto_start: false         # set true to start on the first computer_use call
+  auto_start: false         # set true to start on the first computer_use call or headed browser use
   min_free_memory_mb: 1536  # refuse to start below this much free memory (0 = never check)
   idle_stop_minutes: 30     # stop a screen nobody used for this long (0 = keep it up)
 ```
@@ -213,7 +220,8 @@ bot_desktop:
 `auto_start` is off by default. Start the screen from the Desktop's Screen
 pane (**Start screen**), from `hermes computer-use screen start`, or set the
 flag to `true` for a headless host that should bring its screen up the first
-time the bot calls `computer_use` and no display is available.
+time the bot calls `computer_use` or opens a headed browser (`browser.headed:
+true`) and no display is available.
 
 State lives under `<HERMES_HOME>/bot-desktop/` per profile (RFB Unix socket,
 Xauthority, launcher log, per-profile xfconf).
@@ -269,13 +277,14 @@ Xauthority, launcher log, per-profile xfconf).
 
 WSL2 counts as a supported Linux host: `screen status` reports it as such and
 the pane is offered. One WSLg quirk gets in the way of the first start: WSLg
+<!-- no-tmp: ok — the X11 socket directory is fixed by the protocol, not a scratch path -->
 mounts `/tmp/.X11-unix` read-only, so `Xvnc` cannot create its display socket
 and dies with `Cannot establish any listening sockets` in `launcher.log`.
 Replace the mount with a writable directory before starting the screen:
 
 ```bash
-sudo umount /tmp/.X11-unix
-sudo mkdir -p /tmp/.X11-unix && sudo chmod 1777 /tmp/.X11-unix
+sudo umount /tmp/.X11-unix  # no-tmp: ok — X11 socket directory, fixed by the protocol
+sudo mkdir -p /tmp/.X11-unix && sudo chmod 1777 /tmp/.X11-unix  # no-tmp: ok — same
 ```
 
 The mount comes back on the next WSL restart; repeat the two commands then.
