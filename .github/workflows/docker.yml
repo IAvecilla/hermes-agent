@@ -127,7 +127,9 @@ jobs:
           build-args: |
             HERMES_GIT_SHA=${{ github.sha }}
             HERMES_BOT_DESKTOP=${{ matrix.variant == 'desktop' && '1' || '0' }}
-          cache-from: type=gha,scope=docker-${{ matrix.arch }}-${{ matrix.variant }}
+          cache-from: |
+            type=gha,scope=docker-${{ matrix.arch }}-${{ matrix.variant }}
+            type=gha,scope=docker-${{ matrix.arch }}-slim
           cache-to: ${{ (github.event_name != 'pull_request') && format('type=gha,mode=max,scope=docker-{0}-{1}', matrix.arch, matrix.variant) || '' }}
 
 
@@ -245,7 +247,9 @@ jobs:
             HERMES_GIT_SHA=${{ github.sha }}
             HERMES_BOT_DESKTOP=${{ matrix.variant == 'desktop' && '1' || '0' }}
           outputs: type=image,name=${{ env.IMAGE_NAME }},push-by-digest=true,name-canonical=true,push=true
-          cache-from: type=gha,scope=docker-${{ matrix.arch }}-${{ matrix.variant }}
+          cache-from: |
+            type=gha,scope=docker-${{ matrix.arch }}-${{ matrix.variant }}
+            type=gha,scope=docker-${{ matrix.arch }}-slim
           cache-to: type=gha,mode=max,scope=docker-${{ matrix.arch }}-${{ matrix.variant }}
 
       - name: Export digest
@@ -320,6 +324,9 @@ jobs:
           SUFFIX: ${{ matrix.suffix }}
         run: |
           set -euo pipefail
+          # Without nullglob an empty directory yields the literal `*`, so the
+          # guard below would never see a zero-length args.
+          shopt -s nullglob
           args=()
           for digest_file in *; do
             args+=("${IMAGE_NAME}@sha256:${digest_file}")

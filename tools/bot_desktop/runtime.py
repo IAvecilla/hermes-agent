@@ -119,8 +119,9 @@ def installable() -> bool:
 
     False on an unprivileged process with no ``sudo`` to reach for, which is exactly the published Docker
     image: services drop to the ``hermes`` user and no ``sudo`` binary is installed. The packages can only
-    arrive in the image there, so the pane must say that instead of offering a button that cannot work or
-    printing a sudo line the user has no way to run.
+    arrive in the image there, so :func:`start` says that instead of printing a sudo line the user has no
+    way to run. ``status()`` still reports ``install_command`` for the pane; surfacing this there needs a
+    wire-contract change and is deliberately out of scope.
     """
     if package_manager() is None:
         return False

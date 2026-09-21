@@ -76,9 +76,10 @@ RUN apt-get -o Acquire::Retries=3 update && \
 # Bot Screen (opt-in): PACKAGES["apt"] from tools/bot_desktop/runtime.py plus apt
 # `chromium` for the dock's Browser icon. ~930 MB apt on debian:13.4 (~1.4 GB of
 # image once the gated headed Chromium below is counted); nothing starts
-# at boot. docker.yml passes =1, so the published image always carries them:
-# hosted sandboxes pull a prebuilt image and never run a build, and cannot apt
-# at run time either (unprivileged, no sudo). Only this build step needs root —
+# at boot. docker.yml builds both variants and publishes these packages under
+# the `-desktop` tags: hosted sandboxes pull a prebuilt image and never run a
+# build, and cannot apt at run time either (unprivileged, no sudo). Only this
+# build step needs root —
 # Xvnc is a userspace X server, so the runtime user can drive it.
 #   docker build --build-arg HERMES_BOT_DESKTOP=1 .
 ARG HERMES_BOT_DESKTOP=0

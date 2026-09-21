@@ -92,10 +92,12 @@ reverse proxy's access log may record an already-spent ticket.
 ### Baking the packages into a container image
 
 An image for a hosted or unprivileged deployment cannot install anything at run
-time, so the packages have to be built in. **The published image already has
-them** — CI builds it with the argument below turned on — so hosted deployments
-(Fly Machines, Azure container instances) that pull it need no extra step; a
-build argument could not reach them anyway, since they never run a build.
+time, so the packages have to be built in. CI publishes two variants of every
+version: the unsuffixed tags (`:latest`, `:v*`) without them, and the
+**`-desktop` tags** (`:latest-desktop`, `:v*-desktop`) with them. A hosted
+deployment (Fly Machines, Azure container instances) gets Bot Screen by pulling
+the suffixed tag; a build argument could not reach it anyway, since it never
+runs a build.
 
 Build your own only if you want the packages in a custom image. The official
 `Dockerfile` has an opt-in build argument, off by default so a plain

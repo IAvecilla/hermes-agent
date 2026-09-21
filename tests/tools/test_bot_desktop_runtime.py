@@ -441,3 +441,33 @@ def test_a_host_that_can_install_gets_the_command(tmp_path, monkeypatch):
     monkeypatch.setattr(runtime, "is_root", lambda: True)
     with pytest.raises(RuntimeError, match="tigervnc-standalone-server"):
         runtime.start()
+
+
+def test_a_tight_but_sufficient_start_is_logged(tmp_path, monkeypatch, caplog):
+    """Above the floor but below the derived threshold the start proceeds and says so. It is the only
+    signal an operator gets that a screen came up with no room for the browser that is the point of it,
+    so it has to actually fire rather than merely be computable."""
+    from tools.bot_desktop import resources
+
+    spawned = _startable_host(monkeypatch, tmp_path)
+    monkeypatch.setattr(resources, "min_free_mb", lambda: 1536)  # threshold -> 2048
+    monkeypatch.setattr(resources, "memory_info",
+                        lambda: resources.MemoryInfo(available_mb=1800, limit_mb=2048))
+    with caplog.at_level("WARNING", logger="tools.bot_desktop.runtime"):
+        runtime.start()
+    assert spawned, "1800 MB clears the 1536 MB floor, so the screen still starts"
+    logged = [r.getMessage() for r in caplog.records]
+    assert any("1800 MB available" in m for m in logged), f"no tight-headroom warning in {logged}"
+
+
+def test_a_comfortable_start_is_not_logged(tmp_path, monkeypatch, caplog):
+    """And it stays quiet with real headroom, or it would fire on every start and mean nothing."""
+    from tools.bot_desktop import resources
+
+    _startable_host(monkeypatch, tmp_path)
+    monkeypatch.setattr(resources, "min_free_mb", lambda: 1536)
+    monkeypatch.setattr(resources, "memory_info",
+                        lambda: resources.MemoryInfo(available_mb=7210, limit_mb=8182))
+    with caplog.at_level("WARNING", logger="tools.bot_desktop.runtime"):
+        runtime.start()
+    assert not [m for m in (r.getMessage() for r in caplog.records) if "available" in m]

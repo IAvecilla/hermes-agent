@@ -62,9 +62,10 @@ def _playwright_executable() -> Optional[str]:
 
 
 def _is_headless_shell(exe: str) -> bool:
-    """Playwright's ``chrome-headless-shell`` can drive pages but cannot open a window: the official Docker
-    image ships only that build and its boot hook exports it as ``AGENT_BROWSER_EXECUTABLE_PATH``, so
-    trusting the override blindly would pin a windowless binary to the dock's Browser icon."""
+    """Playwright's ``chrome-headless-shell`` can drive pages but cannot open a window. The image's boot
+    hook exports it as ``AGENT_BROWSER_EXECUTABLE_PATH`` (it is the only build the unsuffixed tags carry,
+    and the lighter one everywhere), so trusting that override blindly would pin a windowless binary to
+    the dock's Browser icon."""
     return "headless" in os.path.basename(exe).lower() or "headless_shell" in exe
 
 
