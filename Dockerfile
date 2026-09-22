@@ -315,6 +315,10 @@ RUN cd web && npm run build && \
 # deterministic when HERMES_UID is remapped between boots.
 RUN mkdir -p /tmp/.X11-unix && chmod 1777 /tmp/.X11-unix
 
+# XDG_RUNTIME_DIR (set below) sits under a predictable name in world-writable /tmp.
+# Shipping it root-owned means stage2 finds a directory it trusts and chowns it.
+RUN mkdir -p /tmp/hermes-runtime && chmod 0700 /tmp/hermes-runtime
+
 # ---------- Source code ----------
 # .dockerignore excludes node_modules, so the installs above survive.
 # --link decouples this layer from parents for cache purposes; --chmod bakes
