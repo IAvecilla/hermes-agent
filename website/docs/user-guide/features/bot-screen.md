@@ -97,7 +97,8 @@ version: the unsuffixed tags (`:latest`, `:v*`) without them, and the
 **`-desktop` tags** (`:latest-desktop`, `:v*-desktop`) with them. A hosted
 deployment (Fly Machines, Azure container instances) gets Bot Screen by pulling
 the suffixed tag; a build argument could not reach it anyway, since it never
-runs a build.
+runs a build. Nothing in the provisioner selects `-desktop` yet, so a hosted
+instance still comes up slim; pulling the suffixed tag yourself works today.
 
 Build your own only if you want the packages in a custom image. The official
 `Dockerfile` has an opt-in build argument, off by default so a plain
