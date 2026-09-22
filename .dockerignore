@@ -77,6 +77,26 @@ apps/
 !apps/shared/
 !apps/shared/**
 
+# `hermes webapp` serves the Desktop renderer as a plain browser bundle, so the
+# renderer sources have to reach the webapp_build stage. Only that throwaway
+# stage sees them; the runtime image gets the built dist-webapp and nothing
+# else. Re-exclude the outputs and the installed tree below: they are rebuilt
+# from the lockfile inside the stage, and a host node_modules (290 MB, with
+# natives compiled for the host arch) would both bloat the context and mask a
+# broken install.
+!apps/desktop/
+!apps/desktop/**
+apps/desktop/node_modules
+apps/desktop/node_modules/**
+apps/desktop/dist
+apps/desktop/dist/**
+apps/desktop/dist-webapp
+apps/desktop/dist-webapp/**
+apps/desktop/release
+apps/desktop/release/**
+apps/desktop/e2e
+apps/desktop/e2e/**
+
 # Test suite — not shipped in production images
 tests/
 

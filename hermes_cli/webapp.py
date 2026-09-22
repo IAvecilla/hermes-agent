@@ -24,6 +24,9 @@ from hermes_cli.main_web_build import _run_npm_install_deterministic, _run_with_
 
 
 _DIST_NAME = "dist-webapp"
+# Names a renderer built ahead of time (the Docker image bakes one). Set, it
+# replaces the build entirely; see prepare_webapp_renderer.
+_DIST_ENV = "HERMES_WEBAPP_DIST"
 _STAMP_NAME = "desktop-webapp-build-stamp.json"
 # Serialize renderer publication with Dashboard builds in this checkout.
 # Webapp installs dependencies in a private copy; native node_modules stays intact.
@@ -312,6 +315,27 @@ def prepare_webapp_renderer(
 ) -> Path:
     """Return a verified browser renderer, serializing concurrent builds."""
     project_root = project_root.resolve()
+
+    # An operator who baked the renderer names it here, and we take that at
+    # its word: no stamp check, no lock, no npm. The container is the case
+    # this exists for — its bundle is built into the image and /opt/hermes is
+    # read-only to the service user, so even the lock's ``open("a+b")`` is
+    # refused, let alone a build.
+    #
+    # Deliberately NOT ``HERMES_WEB_DIST``: a Webapp launched from a packaged
+    # Desktop inherits that one pointing at the Electron bundle, and honouring
+    # it would silently serve the wrong renderer. This variable only ever
+    # means "the browser renderer is already built, here".
+    preset = os.environ.get(_DIST_ENV, "").strip()
+    if preset:
+        baked = Path(preset).expanduser()
+        if not (baked / "index.html").is_file():
+            raise WebappBuildError(
+                f"{_DIST_ENV} is set but no Webapp renderer exists at {baked}"
+            )
+        print(f"→ Using the prebuilt Hermes Webapp renderer at {baked} ({_DIST_ENV})")
+        return baked
+
     dist = webapp_dist_dir(project_root)
     lock_path = project_root / _LOCK_NAME
     with _exclusive_build_lock(lock_path):

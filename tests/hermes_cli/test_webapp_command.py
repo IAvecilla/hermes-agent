@@ -57,6 +57,51 @@ def test_skip_build_requires_the_separate_webapp_bundle(tmp_path: Path):
         webapp.prepare_webapp_renderer(tmp_path, skip_build=True)
 
 
+def test_prebuilt_dist_env_replaces_the_build(tmp_path: Path, monkeypatch):
+    """A baked renderer is served as-is: no stamp, no lock, no npm.
+
+    The container relies on this. Its bundle is built into the image and
+    /opt/hermes is read-only to the service user, so taking the build lock
+    there fails before a build could even be considered.
+    """
+    baked = tmp_path / "baked"
+    baked.mkdir()
+    (baked / "index.html").write_text("prebuilt", encoding="utf-8")
+    monkeypatch.setenv("HERMES_WEBAPP_DIST", str(baked))
+
+    def _no_lock(path):
+        raise AssertionError(f"took the build lock at {path}")
+
+    monkeypatch.setattr(webapp, "_exclusive_build_lock", _no_lock)
+
+    # A project root that cannot be built from at all — the env var is the
+    # only thing standing between the caller and a failure.
+    assert webapp.prepare_webapp_renderer(tmp_path / "absent") == baked
+
+
+def test_prebuilt_dist_env_is_not_read_from_hermes_web_dist(tmp_path: Path, monkeypatch):
+    """A Webapp launched from a packaged Desktop inherits HERMES_WEB_DIST.
+
+    That value points at the Electron bundle, so honouring it would serve the
+    wrong renderer. Only HERMES_WEBAPP_DIST means "already built".
+    """
+    _workspace_tree(tmp_path)
+    electron_bundle = tmp_path / "electron-dist"
+    electron_bundle.mkdir()
+    (electron_bundle / "index.html").write_text("electron", encoding="utf-8")
+    monkeypatch.setenv("HERMES_WEB_DIST", str(electron_bundle))
+
+    with pytest.raises(webapp.WebappBuildError, match="dist-webapp"):
+        webapp.prepare_webapp_renderer(tmp_path, skip_build=True)
+
+
+def test_prebuilt_dist_env_pointing_nowhere_fails_closed(tmp_path: Path, monkeypatch):
+    monkeypatch.setenv("HERMES_WEBAPP_DIST", str(tmp_path / "missing"))
+
+    with pytest.raises(webapp.WebappBuildError, match="HERMES_WEBAPP_DIST"):
+        webapp.prepare_webapp_renderer(tmp_path)
+
+
 def test_desktop_content_hash_tracks_shared_source(tmp_path: Path):
     _workspace_tree(tmp_path)
     desktop_source = tmp_path / "apps" / "desktop" / "src.ts"

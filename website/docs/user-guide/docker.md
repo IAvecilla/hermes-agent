@@ -116,9 +116,12 @@ The dashboard is supervised by s6 — if it crashes, `s6-supervise` restarts it 
 | Environment variable | Description | Default |
 |---------------------|-------------|---------|
 | `HERMES_DASHBOARD` | Set to `1` (or `true` / `yes`) to enable the supervised dashboard service | *(unset — service is registered but stays down)* |
+| `HERMES_WEBAPP` | Set to `1` (or `true` / `yes`) to serve the **Desktop workspace** on that same service instead of the dashboard — the chat-first UI, in a plain browser. Also enables the service on its own, so `HERMES_DASHBOARD` is not needed alongside it | *(unset — the service serves the dashboard)* |
 | `HERMES_DASHBOARD_HOST` | Bind address for the dashboard HTTP server | `0.0.0.0` |
 | `HERMES_DASHBOARD_PORT` | Port for the dashboard HTTP server | `9119` |
 | `HERMES_DASHBOARD_INSECURE` | **Deprecated / no-op.** Formerly bypassed the auth gate; as of the June 2026 hardening it no longer disables authentication. A non-loopback bind always requires an auth provider | *(ignored — configure a provider instead)* |
+
+`HERMES_WEBAPP=1` swaps the surface, not the server: same port, same `HERMES_DASHBOARD_*` bind and auth settings, same `/api` routes. The image bakes the browser renderer at build time, so the container never builds it at startup. The two surfaces cannot run side by side in one container — they would both want `HERMES_DASHBOARD_PORT`.
 
 The dashboard inside the container defaults to binding `0.0.0.0` — without it, the published `-p 9119:9119` port would not be reachable from the host. To restrict the bind to container loopback (for sidecar / reverse-proxy setups), set `HERMES_DASHBOARD_HOST=127.0.0.1`.
 

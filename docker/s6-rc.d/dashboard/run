@@ -1,23 +1,35 @@
 #!/command/with-contenv sh
 # shellcheck shell=sh
-# Dashboard service. Always declared so s6 has a supervised slot; if
-# HERMES_DASHBOARD isn't truthy the run script exits cleanly and the
-# companion finish script returns 125 (s6's "permanent failure, do
-# not restart" marker), so s6-svstat reports the slot as down. See
-# also docker/s6-rc.d/dashboard/finish.
+# Web-surface service. Always declared so s6 has a supervised slot; if
+# neither HERMES_DASHBOARD nor HERMES_WEBAPP is truthy the run script exits
+# cleanly and the companion finish script returns 125 (s6's "permanent
+# failure, do not restart" marker), so s6-svstat reports the slot as down.
+# See also docker/s6-rc.d/dashboard/finish.
+#
+# One slot, two surfaces. `dashboard` and `webapp` are the same hardened
+# server on the same port — webapp only swaps the bundle it serves for the
+# Desktop workspace. Running them as two supervised services would just be
+# two processes fighting over 9119, so HERMES_WEBAPP picks which surface
+# this slot starts.
 
-case "${HERMES_DASHBOARD:-}" in
-    1|true|TRUE|True|yes|YES|Yes) ;;
-    *)
-        # Exit 0; the finish script will exit 125 → s6-supervise won't
-        # restart us and the slot reports down. Using a clean exit
-        # (rather than `exec sleep infinity`) means s6-svstat reflects
-        # reality: when HERMES_DASHBOARD is unset, the service is NOT
-        # running, just supervised-with-permanent-failure. See PR
-        # #30136 review item I3.
-        exit 0
-        ;;
-esac
+truthy() {
+    case "${1:-}" in
+        1|true|TRUE|True|yes|YES|Yes) return 0 ;;
+        *) return 1 ;;
+    esac
+}
+
+if truthy "${HERMES_DASHBOARD:-}" || truthy "${HERMES_WEBAPP:-}"; then
+    :
+else
+    # Exit 0; the finish script will exit 125 → s6-supervise won't
+    # restart us and the slot reports down. Using a clean exit
+    # (rather than `exec sleep infinity`) means s6-svstat reflects
+    # reality: when neither var is set, the service is NOT running,
+    # just supervised-with-permanent-failure. See PR #30136 review
+    # item I3.
+    exit 0
+fi
 
 # with-contenv repopulates HOME from /init as /root. Reset it before
 # dropping privileges so HOME-anchored state lands under /opt/data.
@@ -30,9 +42,10 @@ cd /opt/data
 dash_host="${HERMES_DASHBOARD_HOST:-0.0.0.0}"
 dash_port="${HERMES_DASHBOARD_PORT:-9119}"
 
-# The dashboard's auth gate engages automatically on non-loopback binds and
-# REQUIRES a DashboardAuthProvider to be registered, else start_server fails
-# closed. Two zero-infra ways to satisfy it in a container:
+# The auth gate engages automatically on non-loopback binds and REQUIRES a
+# DashboardAuthProvider to be registered, else start_server fails closed. It
+# guards both surfaces — `webapp` hands off to the same start_server. Two
+# zero-infra ways to satisfy it in a container:
 #   • Password: set HERMES_DASHBOARD_BASIC_AUTH_USERNAME + _PASSWORD (bundled
 #     dashboard_auth/basic provider — no external IDP).
 #   • OAuth:    set HERMES_DASHBOARD_OAUTH_CLIENT_ID (bundled nous provider).
@@ -50,7 +63,19 @@ case "${HERMES_DASHBOARD_INSECURE:-}" in
         ;;
 esac
 
+if truthy "${HERMES_WEBAPP:-}"; then
+    # The renderer is baked at image build time (see the webapp_build stage in
+    # the Dockerfile) and /opt/hermes is read-only to the hermes user, so name
+    # the prebuilt bundle and never let the surface reach for npm — it could
+    # not even take its build lock here. --skip-build is belt-and-braces: it
+    # keeps the failure clean if the bundle ever goes missing.
+    HERMES_WEBAPP_DIST=/opt/hermes/apps/desktop/dist-webapp
+    export HERMES_WEBAPP_DIST
+    set -- webapp --host "$dash_host" --port "$dash_port" --no-open --skip-build
+else
+    set -- dashboard --host "$dash_host" --port "$dash_port" --no-open
+fi
+
 # Skip the drop when already non-root.
-[ "$(id -u)" = 0 ] || exec hermes dashboard --host "$dash_host" --port "$dash_port" --no-open
-exec s6-setuidgid hermes hermes dashboard \
-    --host "$dash_host" --port "$dash_port" --no-open
+[ "$(id -u)" = 0 ] || exec hermes "$@"
+exec s6-setuidgid hermes hermes "$@"

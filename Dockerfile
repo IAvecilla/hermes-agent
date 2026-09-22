@@ -49,6 +49,47 @@ FROM ghcr.io/astral-sh/uv:0.11.6-python3.13-trixie@sha256:b3c543b6c4f23a5f2df228
 # 2.41) runtime.  Bumping to a new Node major is a one-line ARG change; see
 # #4977.
 FROM node:26-bookworm-slim@sha256:9e6f9357d371591e32ab6f2d8a26d63bdd0d17c29eee3f4f3e7e454d9634bf73 AS node_source
+
+# Browser-hosted Desktop renderer, the bundle `hermes webapp` serves.
+#
+# Built in a throwaway stage rather than in the runtime image: the renderer
+# needs the desktop workspace's whole toolchain (vite, tailwind, the React
+# compiler babel plugin) plus `electron`/`electron-builder`, which
+# scripts/assert-root-install.mjs requires to be *present* even though the
+# browser build never packages anything. None of that belongs in an image
+# whose only job is to serve the finished static bundle, so the final stage
+# copies dist-webapp out and leaves the ~1 GB install behind.
+FROM node_source AS webapp_build
+WORKDIR /build
+
+# Same rationale as the runtime stage: install `file:` workspace deps as
+# symlinks so the hoisted tree matches the root lock.
+ENV npm_config_install_links=false
+# electron and @playwright/test fetch 100-300 MB binaries from their install
+# scripts. --ignore-scripts already suppresses that (and every node-gyp build:
+# the renderer bundle needs no natives), but a stray script that slips the gate
+# must not reach for the network either.
+ENV ELECTRON_SKIP_BINARY_DOWNLOAD=1
+ENV PLAYWRIGHT_SKIP_BROWSER_DOWNLOAD=1
+
+# Manifests only, so the install layer is cached until a dependency moves.
+# The workspace globs in package.json cover apps/*, ui-tui and web; npm
+# tolerates the members that are absent here, but it resolves `@hermes/shared`
+# and `@hermes/ink` through their directories, so those two are copied whole.
+COPY package.json package-lock.json ./
+COPY apps/desktop/package.json apps/desktop/
+COPY apps/shared/ apps/shared/
+COPY web/package.json web/
+COPY ui-tui/package.json ui-tui/
+COPY ui-tui/packages/hermes-ink/ ui-tui/packages/hermes-ink/
+RUN npm install --prefer-offline --no-audit --fetch-retries=5 --ignore-scripts
+
+COPY apps/desktop/ apps/desktop/
+# `build:webapp` is `vite build --outDir dist-webapp` behind the root-install
+# guard. vite exits 0 on an empty bundle, so assert the entrypoint exists.
+RUN npm run --workspace apps/desktop build:webapp && \
+    test -f apps/desktop/dist-webapp/index.html
+
 FROM debian:13.4
 
 # Disable Python stdout buffering to ensure logs are printed immediately.
@@ -289,6 +330,14 @@ RUN cd web && npm run build && \
 # gives the non-root hermes user read + traverse but no write; root retains
 # write so the build steps below don't need chmod u+w dances.
 COPY --link --chmod=a+rX,go-w . .
+
+# The browser-hosted Desktop bundle `hermes webapp` serves, lifted out of the
+# webapp_build stage. It lands where the renderer would have been built from
+# source (apps/desktop/dist-webapp) so `hermes webapp --skip-build` finds it on
+# its own path, and read-only like the rest of /opt/hermes — the bundle is
+# immutable and the service points HERMES_WEB_DIST at it rather than rebuilding.
+COPY --link --chmod=a+rX,go-w --from=webapp_build \
+     /build/apps/desktop/dist-webapp /opt/hermes/apps/desktop/dist-webapp
 
 # ---------- Permissions ----------
 # Link hermes-agent itself (editable). Deps are already installed in the
