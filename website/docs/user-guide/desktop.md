@@ -90,6 +90,50 @@ Chats written before the gateway owned sessions show their history but cannot be
 browser until they are adopted: run `hermes sessions adopt` once on the host (`hermes -p <profile>
 sessions adopt` for another profile), or open them once in the native Desktop, TUI or CLI.
 
+### Open it from your phone or another computer
+
+In the native app, **Settings → Web Access** sets up the Webapp for other devices and who may sign in.
+The pane appears only on the local connection; a remote connection has no "this computer" to expose.
+
+1. **Where to open it.**
+   - **This network:** the Webapp listens on every interface (`webapp.host: 0.0.0.0`) and devices on the
+     same Wi-Fi open `http://<this computer's address>:<port>`. The pane shows the address and a QR code.
+     This is plain HTTP, so the sign-in and session cookie travel unencrypted on that network: use it
+     only on a network you trust.
+   - **My own URL:** an HTTPS address you already run that forwards to `http://127.0.0.1:<port>`. The
+     Webapp listens on loopback only and `dashboard.public_url` is set to that address, which keeps the
+     sign-in gate on and makes the Nous callback point at it.
+2. **Sign-in.**
+   - **Nous account:** registers this computer under the Nous account you are signed in to (Providers →
+     Accounts). No password to manage. It is re-registered on every Start, so it follows a changed
+     network address or URL.
+   - **Password:** a username and password, for **This network** only. **My own URL** requires the Nous
+     account; with only a password set, Start stays disabled and says why.
+3. **Start.** Start stays disabled until a sign-in method exists. It saves the `webapp:` settings and
+   restarts the gateway, which reads them when it starts; Desktop reconnects on its own. The pane shows
+   **Starting** until the gateway serves the Webapp, and **Unavailable** with the reason when it cannot.
+   While a chat is running the gateway refuses to restart: the settings stay saved and apply on its next
+   restart. **Stop** turns the Webapp off the same way. Since the gateway serves it, the Webapp keeps
+   running after you quit Desktop.
+
+#### Putting it on the internet
+
+Hermes does not open router ports or provision certificates. Run any HTTPS front end that forwards to
+`http://127.0.0.1:<port>`, then paste its address into **My own URL**:
+
+- **Tailscale Serve** (`tailscale serve --bg <port>`): private to the devices on your tailnet, with a
+  real certificate. The safest option.
+- **Tailscale Funnel** (`tailscale funnel --bg <port>`) or **Cloudflare Tunnel**: public HTTPS without
+  opening a port. Nous sign-in is then the only barrier.
+- **Your own reverse proxy** (Caddy, nginx) with a certificate. Never forward the Webapp's plain-HTTP
+  port from your router directly.
+
+A laptop that sleeps or changes networks makes a poor always-on host; Hermes Cloud serves the same
+workspace behind the Nous login.
+
+`hermes webapp --lan` or `hermes webapp --public-url https://…` does the same setup from the command
+line; see the [CLI reference](../reference/cli-commands.md#access-from-other-devices).
+
 ### Terminal in the Webapp
 
 The terminal rail opens the host's interactive shell, running as a child of the gateway, in your home

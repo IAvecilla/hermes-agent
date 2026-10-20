@@ -1960,12 +1960,48 @@ serve the Webapp, the command says why; the gateway reads its Webapp settings wh
 | `--build-only` | Build the bundle and stop |
 | `--status` | Show whether the running gateway serves the Webapp, and at which address |
 | `--sign-out` | Sign out every tab a link signed in; their connections close and each needs a new link |
+| `--lan` | Set up access from devices on this machine's network, behind a sign-in (see below) |
+| `--public-url URL` | Set up access through an HTTPS URL you already run, behind Nous sign-in (see below) |
+| `--port PORT` | With `--lan` or `--public-url`: the port the Webapp listens on (default `9120`) |
+| `--auth nous\|password` | With `--lan` or `--public-url`: the sign-in to set up (default: keep what is configured, else `nous`) |
+| `--name NAME` | With `--auth nous`: the label for the Nous sign-in registration |
 
 ```bash
 # Turn it on once, then open it
 hermes config set webapp.enabled true
 hermes gateway restart
 hermes webapp
+```
+
+### Access from other devices
+
+`hermes webapp --lan` or `hermes webapp --public-url https://…` writes the configuration for the
+Webapp to be reached from other devices, behind a sign-in. Desktop's **Settings → Web Access** pane runs
+the same setup. Both write the config of the gateway that serves this profile; for a named profile the
+default gateway serves, run it on that gateway's profile.
+
+- `--lan` sets `webapp.host: 0.0.0.0`: devices on the same Wi-Fi open `http://<lan-address>:<port>`,
+  behind the dashboard sign-in gate. It clears `dashboard.public_url`, because a LAN bind answers on
+  more than one host name.
+- `--public-url https://…` is for an HTTPS address you already run (a reverse proxy, Tailscale
+  Serve, or a tunnel) that forwards to `http://127.0.0.1:<port>`. It sets `webapp.host: 127.0.0.1`
+  and `dashboard.public_url`, which turns the sign-in gate on even on the loopback bind and fixes the
+  OAuth callback.
+- `--auth nous` (the default when no sign-in method exists) registers the OAuth client with the right
+  callback, the same registration as [`hermes dashboard register`](#hermes-dashboard-register).
+  Configured Nous sign-in is re-registered on every run, so it follows a changed LAN address or URL.
+  `--auth password` prompts for a username and password and works only with `--lan`: `--public-url`
+  requires Nous sign-in.
+- It refuses, without changing anything, when no sign-in method would exist afterwards.
+
+The gateway reads these settings when it starts. When no gateway is running, the command starts one
+and opens the Webapp's address; when one is running, it tells you to run `hermes gateway restart`.
+
+```bash
+hermes webapp --lan
+# ✓ The Webapp will serve your network.
+#   Sign-in: your Nous account
+#   Open: http://192.168.1.50:9120
 ```
 
 ## `hermes profile`
