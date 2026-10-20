@@ -22,7 +22,8 @@ def _home(path: Path, config: str = "") -> Path:
 
 def _args(**overrides) -> Namespace:
     values = {"no_open": False, "status": False, "sign_out": False, "build_only": False,
-              "force_build": False, "skip_build": False}
+              "force_build": False, "skip_build": False, "lan": False, "public_url": None, "port": 9120,
+              "auth": None, "name": None}
     values.update(overrides)
     return Namespace(**values)
 
@@ -214,7 +215,8 @@ def test_the_webapp_command_takes_one_action_at_a_time():
     args = parser.parse_args(["webapp", "--no-open", "--force-build"])
     args.func(args)
     assert vars(seen[0]) | {"func": None} == vars(_args(no_open=True, force_build=True)) | {"func": None}
-    for clash in (["--status", "--sign-out"], ["--status", "--build-only"], ["--sign-out", "--build-only"]):
+    for clash in (["--status", "--sign-out"], ["--status", "--build-only"], ["--sign-out", "--build-only"],
+                  ["--lan", "--public-url", "https://hermes.example.test"], ["--lan", "--status"]):
         with pytest.raises(SystemExit):
             parser.parse_args(["webapp", *clash])
 
@@ -227,3 +229,17 @@ def test_a_private_link_is_printed_for_the_user_and_never_handed_to_a_browser_la
     assert world["calls"]["opened"] == []
     out = capsys.readouterr().out
     assert private in out and "keep it private" in out
+
+
+@pytest.mark.parametrize("gateway_running", [True, False])
+def test_setting_up_access_restarts_a_running_gateway_or_starts_one_that_serves_it(world, capsys, gateway_running):
+    import hermes_cli.webapp_setup_cmd as setup_cmd
+    configured = []
+    world["monkeypatch"].setattr(setup_cmd, "set_up_access", lambda args, home, target: configured.append(target))
+    if not gateway_running:
+        world["answers"]["webapp-status"] = launcher.GatewayUnreachable("no socket")
+    assert launcher.cmd_webapp(_args(lan=True)) == 0
+    assert configured == [world["root"]]
+    # A running gateway reads the new config only when it restarts; a stopped one starts with it.
+    assert ("hermes gateway restart" in capsys.readouterr().out) is gateway_running
+    assert world["calls"]["ensure"] == ([] if gateway_running else [world["root"]])

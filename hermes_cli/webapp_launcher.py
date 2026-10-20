@@ -5,7 +5,8 @@ The gateway serves the Webapp on its own listener when its home's config sets ``
 serves the current profile, asks it for a one-use launch link over the control socket (same OS user
 only) and opens that link, so the credential appears in no argv, output or link. On macOS, where a
 one-use link cannot be redeemed, it prints the gateway's private link for the user to open instead.
-``--status`` and ``--sign-out`` talk to a running gateway and never start one.
+``--status`` and ``--sign-out`` talk to a running gateway and never start one. ``--lan`` and
+``--public-url`` first set up access from other devices (``hermes_cli.webapp_setup_cmd``).
 """
 from __future__ import annotations
 
@@ -144,6 +145,17 @@ def cmd_webapp(args) -> int:
         return _status(target)
     if args.sign_out:
         return _sign_out(target)
+    if args.lan or args.public_url:
+        from hermes_cli.webapp_access import gateway_state
+        from hermes_cli.webapp_setup_cmd import SetupFailed, set_up_access
+        try:
+            set_up_access(args, home, target)
+        except SetupFailed as exc:
+            print(f"✗ {exc}")
+            return 1
+        if gateway_state(target)["state"] != "stopped":
+            print(f"The gateway is running; restart it to apply: {RESTART_COMMAND}")
+            return 0
     if not args.build_only and not webapp_settings(target).enabled:
         print(f"The Webapp is off. Set webapp.enabled: true in {target / 'config.yaml'}, then run hermes webapp again.")
         return 1

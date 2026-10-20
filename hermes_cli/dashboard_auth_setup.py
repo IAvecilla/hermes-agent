@@ -1,6 +1,6 @@
 """Write and clear the bundled username/password dashboard login.
 
-Shared by the interactive ``hermes dashboard``/``webapp`` prompt, ``hermes webapp setup`` and
+Shared by the interactive ``hermes dashboard`` prompt, ``hermes webapp --lan`` and
 Desktop's Web access pane, so every surface stores the same shape: a scrypt hash (never the
 plaintext) plus a stable signing secret under ``dashboard.basic_auth`` in config.yaml.
 """

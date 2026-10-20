@@ -24,4 +24,14 @@ def build_webapp_parser(subparsers, *, cmd_webapp: Callable) -> None:
     action.add_argument("--status", action="store_true", help="Show whether the gateway is serving the Webapp")
     action.add_argument("--sign-out", action="store_true",
                         help="Sign out every Webapp tab (each needs a new link from hermes webapp)")
+    action.add_argument("--lan", action="store_true",
+                        help="Serve on this machine's network address (phones and laptops on the same Wi-Fi), "
+                             "behind a sign-in")
+    action.add_argument("--public-url", dest="public_url", default=None, metavar="URL",
+                        help="Serve behind an HTTPS URL your reverse proxy or tunnel forwards to 127.0.0.1:PORT")
+    parser.add_argument("--port", type=int, default=9120,
+                        help="Port the Webapp listens on with --lan or --public-url (default: 9120)")
+    parser.add_argument("--auth", choices=("nous", "password"), default=None,
+                        help="Sign-in to set up with --lan or --public-url (default: keep what is configured, else nous)")
+    parser.add_argument("--name", default=None, help="Label for the Nous sign-in registration")
     parser.set_defaults(func=cmd_webapp)
