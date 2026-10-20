@@ -399,7 +399,8 @@ export const ruOverrides = {
       about: 'О программе',
       billing: 'Оплата',
       notifications: 'Уведомления',
-      plugins: 'Плагины'
+      plugins: 'Плагины',
+      webAccess: 'Веб-доступ'
     },
     plugins: ruPluginSettings.plugins,
     notifications: {

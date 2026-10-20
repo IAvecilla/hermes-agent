@@ -626,7 +626,8 @@ export interface Translations extends NoticeTranslations {
       billing: string
       notifications: string
       vault: string
-      plugins: string
+      plugins: string,
+      webAccess: string
     }
     plugins: {
       title: string
@@ -1132,6 +1133,62 @@ export interface Translations extends NoticeTranslations {
       saving: string
       cancel: string
       empty: string
+    }
+    webAccess: {
+      title: string
+      unavailableTitle: string
+      unavailableDesc: string
+      intro: string
+      warning: string
+      loadFailed: string
+      statusTitle: string
+      running: string
+      stopped: string
+      notRunning: string
+      notRunningDetail: string
+      needsSignIn: string
+      startingDetail: string
+      needsNousForUrl: string
+      runningLan: string
+      runningPublic: (port: number) => string
+      runningLocal: string
+      scanToOpen: string
+      start: string
+      starting: string
+      stop: string
+      startFailed: string
+      unavailable: string
+      unavailableDetail: (reason: string) => string
+      restartRefused: (reason: string) => string
+      startTimedOut: string
+      stopFailed: string
+      whereTitle: string
+      modeLan: string
+      modeLanDetail: (url: string) => string
+      noLan: string
+      modePublic: string
+      modePublicDetail: (port: number) => string
+      publicUrlLabel: string
+      publicUrlPlaceholder: string
+      portLabel: string
+      lockedWhileRunning: string
+      signInTitle: string
+      nousTitle: string
+      nousOn: string
+      nousOff: string
+      nousNeedsAccount: string
+      nousFailed: string
+      passwordTitle: string
+      passwordOn: (username: string) => string
+      passwordOff: string
+      passwordPublicWarning: string
+      passwordFailed: string
+      username: string
+      password: string
+      setUp: string
+      save: string
+      remove: string
+      removeFailed: string
     }
     managedUpdates: {
       title: string

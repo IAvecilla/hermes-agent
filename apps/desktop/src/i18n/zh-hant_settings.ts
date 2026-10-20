@@ -123,7 +123,8 @@ export const zhHantSettings = {
       billing: '帳單',
       notifications: '通知',
       vault: '密碼與登入',
-      plugins: '外掛程式'
+      plugins: '外掛程式',
+      webAccess: '網頁存取'
     },
     vault: {
       title: '密碼與登入',

@@ -345,7 +345,8 @@ export const jaOverrides = {
       billing: '請求',
       notifications: '通知',
       vault: 'パスワードとログイン',
-      plugins: 'プラグイン'
+      plugins: 'プラグイン',
+      webAccess: 'Web アクセス'
     },
     vault: {
       title: 'パスワードとログイン',

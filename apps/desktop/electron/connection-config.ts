@@ -772,6 +772,12 @@ function localPrimaryRequestScope(opts: ProfileRouteOptions): boolean | null {
     return true
   }
 
+  // Web access (remote Webapp): every handler takes `?profile=` and acts on the
+  // gateway serving that profile; start/stop restart that gateway.
+  if (pathname.startsWith('/api/webapp-access/')) {
+    return true
+  }
+
   // Session WRITES are scoped by `body.profile` (`rename_session_endpoint` ->
   // `_with_db(body.profile, ...)`), not by the query. They ARE scopable — just
   // not through the URL — so they belong on the shared backend with the path
