@@ -35,6 +35,7 @@ export interface OauthLoginWindowDeps<S> {
   createWindow: (options: { session: S; show: boolean; title: string }) => OauthLoginWindowLike
   hasSessionCookie: () => Promise<boolean>
   isExpectedNavigationAbort: (error: unknown) => boolean
+  isWakingLoadFailure?: (error: unknown) => boolean
   loadOptionsFor: (loginUrl: string) => unknown
   log: (message: string) => void
   onLanded: () => void
@@ -42,6 +43,8 @@ export interface OauthLoginWindowDeps<S> {
   pollMs?: number
   revealAfterMs?: number
   deadlineMs?: number
+  wakeRetryMs?: number
+  wakeBudgetMs?: number
 }
 
 export interface OauthLoginWindowRequest<S> {
@@ -59,7 +62,7 @@ export function startOauthLoginWindow<S>(
   { baseUrl, session, silent, background }: OauthLoginWindowRequest<S>,
   deps: OauthLoginWindowDeps<S>
 ): LoginAttempt<OauthLoginOutcome> {
-  const { pollMs = 750, revealAfterMs = 2_500, deadlineMs = 12_000 } = deps
+  const { pollMs = 750, revealAfterMs = 2_500, deadlineMs = 12_000, wakeRetryMs = 1_000, wakeBudgetMs = 45_000 } = deps
 
   let reveal = (): void => {}
 
@@ -70,6 +73,7 @@ export function startOauthLoginWindow<S>(
     let pollTimer: ReturnType<typeof setInterval> | null = null
     let revealTimer: ReturnType<typeof setTimeout> | null = null
     let deadlineTimer: ReturnType<typeof setTimeout> | null = null
+    let wakeTimer: ReturnType<typeof setTimeout> | null = null
 
     const finish = (err: Error | null) => {
       if (settled) {
@@ -88,6 +92,10 @@ export function startOauthLoginWindow<S>(
 
       if (deadlineTimer) {
         clearTimeout(deadlineTimer)
+      }
+
+      if (wakeTimer) {
+        clearTimeout(wakeTimer)
       }
 
       try {
@@ -201,18 +209,34 @@ export function startOauthLoginWindow<S>(
     // `next` is omitted on purpose: the gateway lands on `/` after login,
     // which sets the cookies; only the jar matters.
     const loginUrl = silent ? `${baseUrl.replace(/\/+$/, '')}/` : chooserUrl
+    const startedAt = Date.now()
 
-    live.loadURL(loginUrl, deps.loadOptionsFor(loginUrl)).catch(error => {
-      // Callback navigation can abort the original load after setting cookies.
-      // Keep the bounded hidden recovery alive long enough to observe them.
-      if (hiddenRecovery && deps.isExpectedNavigationAbort(error)) {
-        void checkCookie()
+    const load = () =>
+      live.loadURL(loginUrl, deps.loadOptionsFor(loginUrl)).catch(error => {
+        // Callback navigation can abort the original load after setting cookies.
+        // Keep the bounded hidden recovery alive long enough to observe them.
+        if (hiddenRecovery && deps.isExpectedNavigationAbort(error)) {
+          void checkCookie()
 
-        return
-      }
+          return
+        }
 
-      finish(error instanceof Error ? error : new Error(String(error)))
-    })
+        // A sleeping cloud agent resets the first connection while it resumes.
+        if (!settled && deps.isWakingLoadFailure?.(error) && Date.now() - startedAt < wakeBudgetMs) {
+          deps.log(`OAuth login: ${new URL(loginUrl).host} is not answering yet, retrying while it wakes`)
+          wakeTimer = setTimeout(() => {
+            if (!settled && !live.isDestroyed()) {
+              void load()
+            }
+          }, wakeRetryMs)
+
+          return
+        }
+
+        finish(error instanceof Error ? error : new Error(String(error)))
+      })
+
+    void load()
   })
 
   return { result, reveal: () => reveal() }

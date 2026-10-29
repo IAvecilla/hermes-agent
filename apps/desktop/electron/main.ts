@@ -399,7 +399,7 @@ import { execGit, killTimedGitChildren, setNoConsoleGitRoots } from './no-consol
 import { registerNativeNotifications } from './notification-ipc'
 import { loginFlightKey, OauthLoginFlights } from './oauth-login-flights'
 import { startOauthLoginWindow } from './oauth-login-window'
-import { isExpectedOauthNavigationAbort } from './oauth-navigation'
+import { isExpectedOauthNavigationAbort, isWakingAgentLoadFailure } from './oauth-navigation'
 import { serializeJsonBody, setJsonRequestHeaders } from './oauth-net-request'
 import { LEGACY_OAUTH_PARTITION, resolveOauthPartition } from './oauth-partition'
 import {
@@ -7172,6 +7172,7 @@ function openOauthLoginWindow(
           }),
         hasSessionCookie: () => hasOauthSessionCookie(baseUrl, identity),
         isExpectedNavigationAbort: isExpectedOauthNavigationAbort,
+        isWakingLoadFailure: isWakingAgentLoadFailure,
         loadOptionsFor: loginUrl => {
           const loginHeaders = headersForRemoteRequest(loginUrl)
           rememberLog(
