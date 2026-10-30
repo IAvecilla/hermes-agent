@@ -67,7 +67,6 @@ function harness(cookie = { present: false }, loadFailures: unknown[] = []) {
     },
     hasSessionCookie: async () => cookie.present,
     isExpectedNavigationAbort: () => false,
-    isWakingLoadFailure: (error: unknown) => error instanceof Error && error.message.startsWith('ERR_CONNECTION_RESET'),
     loadOptionsFor: () => ({}),
     log: () => {},
     onLanded: vi.fn()
@@ -167,12 +166,15 @@ test('a foreground silent sign-in reveals itself when auto-SSO does not finish',
 
 const reset = () => new Error("ERR_CONNECTION_RESET (-101) loading 'https://fedora.example.ts.net/'")
 
-test('a sleeping agent that resets the first loads is reloaded until it answers', async () => {
-  const h = harness({ present: false }, [reset(), reset()])
+test('a sleeping agent that resets the first loads is reloaded, hidden, until it answers', async () => {
+  const h = harness({ present: false }, [reset(), reset(), reset()])
   const attempt = h.start({ silent: true, background: false })
 
-  await vi.advanceTimersByTimeAsync(2_000)
-  expect(h.windows[0].state).toMatchObject({ destroyed: false, loads: 3 })
+  await vi.advanceTimersByTimeAsync(3_000)
+  expect(h.windows[0].state).toMatchObject({ destroyed: false, loads: 4, shown: false })
+
+  await vi.advanceTimersByTimeAsync(2_500)
+  expect(h.windows[0].state.shown).toBe(true)
 
   h.cookie.present = true
   h.windows[0].navigate()
@@ -184,9 +186,30 @@ test('an agent that never wakes fails once the wake budget runs out', async () =
   const attempt = h.start({ silent: true, background: false })
   const outcome = attempt.result.catch(error => error)
 
-  await vi.advanceTimersByTimeAsync(46_000)
+  await vi.advanceTimersByTimeAsync(55_000)
+  expect(h.windows[0].state.destroyed).toBe(false)
+
+  await vi.advanceTimersByTimeAsync(6_000)
   expect(await outcome).toMatchObject({ message: expect.stringMatching(/ERR_CONNECTION_RESET/) })
   expect(h.windows[0].state.destroyed).toBe(true)
+})
+
+test('a background sign-in does not wait for a waking gateway', async () => {
+  const h = harness({ present: false }, [reset()])
+  const outcome = h.start({ silent: true, background: true }).result.catch(error => error)
+
+  await vi.advanceTimersByTimeAsync(0)
+  expect(await outcome).toMatchObject({ message: expect.stringMatching(/ERR_CONNECTION_RESET/) })
+  expect(h.windows[0].state.loads).toBe(1)
+})
+
+test('an interactive sign-in to a gateway that refuses the connection fails at once', async () => {
+  const h = harness({ present: false }, [new Error('ERR_CONNECTION_REFUSED (-102)')])
+  const outcome = h.start({ silent: false, background: false }).result.catch(error => error)
+
+  await vi.advanceTimersByTimeAsync(0)
+  expect(await outcome).toMatchObject({ message: expect.stringMatching(/ERR_CONNECTION_REFUSED/) })
+  expect(h.windows[0].state.loads).toBe(1)
 })
 
 test('an interactive sign-in opens visible on the provider chooser', () => {
