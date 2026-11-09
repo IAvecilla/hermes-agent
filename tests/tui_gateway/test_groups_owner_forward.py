@@ -44,7 +44,7 @@ def owner(monkeypatch):
     endpoint = ENDPOINT
     _discovery(monkeypatch, "ready")
 
-    def forward_rpc(home, seen_endpoint, method, params):
+    def forward_rpc(home, seen_endpoint, method, params, *, timeout=None):
         assert seen_endpoint is endpoint
         calls.append((method, dict(params), home))
         if method == "groups.capabilities":
@@ -76,7 +76,7 @@ def test_owner_refusal_is_returned_not_run_locally(home, monkeypatch):
     from hermes_cli.gateway_client import GatewayRPCError
     _discovery(monkeypatch, "ready")
 
-    def refuse(*_args):
+    def refuse(*_args, **_kwargs):
         raise GatewayRPCError("permission_denied", code=4030, data={"reason": "permission_denied"})
     monkeypatch.setattr(owner_forward, "forward_rpc", refuse)
 
@@ -106,7 +106,7 @@ def test_only_sends_refused_before_forwarding_are_marked_unsent(home, monkeypatc
     monkeypatch.setattr(srv, "_profile_home", lambda _: None)
     calls = []
 
-    def refuse(*args):
+    def refuse(*args, **_kwargs):
         calls.append(args)
         if failure.startswith("owner"):
             raise GatewayRPCError("permission_denied", code=code, data=data)
@@ -212,3 +212,49 @@ def test_a_handed_room_is_never_renamed_in_the_standalone_store_while_its_gatewa
     assert reply.get("error", {}).get("code") == OWNER_LOST_CODE, reply
     [kept] = list_rooms(default_db_path(), include_disbanded=True)
     assert kept["name"] == "Before"
+
+
+def test_a_forwarded_call_gets_only_what_is_left_of_the_budget_after_waiting_for_its_gateway(
+        home, monkeypatch):
+    """The wait for a starting gateway and the forwarded call share one budget under the clients' 30 s
+    request timeout, so a slow owner reaches the caller as this wire's retryable refusal instead of
+    the client timing out first (``request timed out after 30s: groups.state``)."""
+    import time
+    from tui_gateway import methods_groups_forward
+    monkeypatch.setattr(methods_groups_forward, "_standalone_holder", lambda _: "gateway")
+    monkeypatch.setattr(methods_groups_forward, "FORWARD_BUDGET_S", 0.6)
+    monkeypatch.setattr(methods_groups_forward, "_MIN_CALL_S", 0.05)
+    monkeypatch.setattr(methods_groups_forward, "_READY_POLL_S", 0.2, raising=False)
+    _discovery(monkeypatch, "starting", "starting", "ready")
+    budgets = []
+
+    def forward_rpc(home, endpoint, method, params, *, timeout=None):
+        budgets.append(timeout)
+        raise TimeoutError()  # the owner never answered within what was left
+    monkeypatch.setattr(owner_forward, "forward_rpc", forward_rpc)
+
+    started = time.monotonic()
+    reply = srv._methods["groups.state"](1, {"room_id": "room-desk"})
+
+    assert reply["error"]["code"] == methods_groups_forward.OWNER_LOST_CODE
+    [budget] = budgets
+    assert budget is not None and 0 < budget <= 0.6 - 0.3  # the two polls came out of the budget
+    assert time.monotonic() - started < 5
+
+
+def test_forward_rpc_gives_up_on_an_owner_that_never_answers(tmp_path, monkeypatch):
+    """``timeout`` bounds the whole call, dial included: a hung owner is a ``TimeoutError`` in time."""
+    import asyncio
+    import contextlib
+    import time
+
+    @contextlib.asynccontextmanager
+    async def hung_owner(*_args, **_kwargs):
+        await asyncio.Event().wait()  # never set: the owner never answers
+        yield None
+    monkeypatch.setattr(owner_forward, "connect_owner", hung_owner)
+
+    started = time.monotonic()
+    with pytest.raises(TimeoutError):
+        owner_forward.forward_rpc(tmp_path, ENDPOINT, "groups.state", {"room_id": "room-desk"}, timeout=0.2)
+    assert time.monotonic() - started < 5

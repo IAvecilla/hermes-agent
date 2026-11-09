@@ -15,7 +15,7 @@ def test_renewable_invitation_through_standalone_dispatch(gateway, monkeypatch):
     monkeypatch.setattr(methods_groups_forward, '_discover', lambda home: SimpleNamespace(state='ready', endpoint=object()))
     forwarded = []
 
-    def forward(home, endpoint, method, params):
+    def forward(home, endpoint, method, params, *, timeout=None):
         forwarded.append((method, dict(params)))
         reply = asyncio.run(gateway.owner.dispatch({'id': 1, 'method': method, 'params': params}))
         assert 'result' in reply, reply

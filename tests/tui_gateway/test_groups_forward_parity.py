@@ -62,7 +62,7 @@ def test_every_gateway_room_method_reaches_the_owning_gateway(home, monkeypatch)
     _hand_room_to_gateway(monkeypatch)
     reached = []
 
-    def forward_rpc(home, endpoint, method, params):
+    def forward_rpc(home, endpoint, method, params, *, timeout=None):
         reached.append(method)
         return {"methods": list(GROUP_METHODS)} if method == "groups.capabilities" else {}
     monkeypatch.setattr(owner_forward, "forward_rpc", forward_rpc)
@@ -84,7 +84,7 @@ def test_a_file_attached_to_a_handed_room_lands_in_the_gateway_copy(home, monkey
     target = _hand_room_to_gateway(monkeypatch)
     calls = []
 
-    def forward_rpc(home, endpoint, method, params):
+    def forward_rpc(home, endpoint, method, params, *, timeout=None):
         calls.append(method)
         assert method == "groups.attachment.upload"
         return store_upload(SimpleNamespace(db_path=target), params["room_id"], params)  # the owner's store

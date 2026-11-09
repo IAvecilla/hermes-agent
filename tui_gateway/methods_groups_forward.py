@@ -46,6 +46,12 @@ _TRANSIENT_STATES = frozenset({"starting", "draining"})
 #: How long one call waits for a starting or restarting gateway before refusing (retryable).
 READY_WAIT_S = 20.0
 _READY_POLL_S = 0.25
+#: Total time one forwarded call may take: the wait for its gateway plus the call itself. Below the
+#: clients' 30 s request timeout (Desktop and the Webapp), so a slow owner reaches the caller as this
+#: wire's retryable refusal, never as the client's own timeout with nothing said.
+FORWARD_BUDGET_S = 25.0
+#: The least time a call still gets once the wait for its gateway used up the budget.
+_MIN_CALL_S = 1.0
 
 
 class _OwnerBusy(Exception):
@@ -121,15 +127,20 @@ def _standalone_rooms(params: dict | None = None) -> list[dict]:
                                   include_disbanded=bool(params and params.get("include_disbanded") is True)))
 
 
-def _call(server, rid, home, endpoint, method: str, params: dict) -> dict:
+def _call(server, rid, home, endpoint, method: str, params: dict, deadline: float) -> dict:
+    """Forward ``method``; whatever is left of the call's budget (``deadline``, monotonic) bounds it."""
+    import time
     from hermes_cli.gateway_client import GatewayRPCError
     from tui_gateway import owner_forward
     try:
-        result = owner_forward.forward_rpc(home, endpoint, method, params)
+        result = owner_forward.forward_rpc(
+            home, endpoint, method, params, timeout=max(_MIN_CALL_S, deadline - time.monotonic()))
     except GatewayRPCError as exc:
         return server._err(rid, exc.code if isinstance(exc.code, int) else 5000, str(exc), exc.data or None)
     except Exception as exc:  # health: allow BLE001 -- transport boundary: any dial/IO failure is one refusal
-        logger.warning("Group Chat %s: the gateway that owns it did not answer: %s", method, exc)
+        # The type too: a timeout's message is empty.
+        logger.warning("Group Chat %s: the gateway that owns it did not answer: %s: %s",
+                       method, type(exc).__name__, exc)
         return server._err(rid, OWNER_LOST_CODE, "The Hermes gateway did not answer. Try again.")
     result = result if isinstance(result, dict) else {}
     if method == "groups.capabilities" and isinstance(result.get("methods"), list):
@@ -149,6 +160,8 @@ def forward(server, rid, method: str, params: dict) -> dict | None:
     runs locally: no gateway serves the profile, or the room lives only in the standalone store."""
     if method not in forwarded():
         return None
+    import time
+    deadline = time.monotonic() + FORWARD_BUDGET_S
     # These refusals happen before forwarding; the owner cannot have admitted this Send.
     not_admitted = {"admitted": False} if method == "groups.send" else None
     try:
@@ -163,7 +176,7 @@ def forward(server, rid, method: str, params: dict) -> dict | None:
             home = _root_home()
             params = {key: value for key, value in params.items() if key != "profile"}
         if method == "groups.list":
-            return _list(server, rid, home, params)
+            return _list(server, rid, home, params, deadline)
         endpoint = owner_endpoint(home)
     except _OwnerBusy as exc:
         return _busy(server, rid, exc, not_admitted)
@@ -176,10 +189,10 @@ def forward(server, rid, method: str, params: dict) -> dict | None:
             return server._err(rid, OWNER_LOST_CODE, "The Hermes gateway that holds this Group Chat "
                                "is not running. Start it and try again.", not_admitted)
         return None
-    return _call(server, rid, home, endpoint, method, params)
+    return _call(server, rid, home, endpoint, method, params, deadline)
 
 
-def _list(server, rid, home, params: dict) -> dict | None:
+def _list(server, rid, home, params: dict, deadline: float) -> dict | None:
     """One Group Chat list that hides no existing room: the profile's gateway rooms, plus (on the
     first page) the rooms only the standalone store holds and, for a named profile, the standalone
     rooms already handed to the root gateway."""
@@ -194,7 +207,7 @@ def _list(server, rid, home, params: dict) -> dict | None:
     if endpoint is None:
         reply = server._ok(rid, {"rooms": [], "next_offset": None})
     else:
-        reply = _call(server, rid, home, endpoint, "groups.list", params)
+        reply = _call(server, rid, home, endpoint, "groups.list", params, deadline)
     if "error" in reply or int(params.get("offset") or 0) != 0:
         return reply
     rooms = list(reply["result"].get("rooms") or [])
@@ -202,7 +215,7 @@ def _list(server, rid, home, params: dict) -> dict | None:
     if root_endpoint is not None:
         page = _call(server, rid, root, root_endpoint, "groups.list",
                      {"include_disbanded": params.get("include_disbanded") is True,
-                      "limit": MAX_ROOM_LIST_LIMIT})
+                      "limit": MAX_ROOM_LIST_LIMIT}, deadline)
         if "error" in page:
             return page
         extra += [room for room in page["result"].get("rooms") or [] if str(room.get("room_id")) in handed]

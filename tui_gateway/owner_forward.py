@@ -218,9 +218,11 @@ class _Relay:
                 self.emit("message.complete", self.sid, {"text": ""})
 
 
-def forward_rpc(home: Path, endpoint, method: str, params: dict) -> Any:
+def forward_rpc(home: Path, endpoint, method: str, params: dict, *, timeout: float | None = None) -> Any:
     """One request/answer RPC on the owner serving ``home`` (Group Chat calls, WA-19), on the
-    host-scoped grant native Desktop itself holds, so a room may seat the served sibling profiles."""
+    host-scoped grant native Desktop itself holds, so a room may seat the served sibling profiles.
+    ``timeout``: seconds for the whole call, dial included (``TimeoutError`` past it); ``None`` keeps
+    the client's own per-call default."""
     from gateway.hosted_room_attachments import MAX_ATTACHMENT_BYTES
     # A groups.attachment.download answer carries a whole file as base64: room for the largest
     # one the room store accepts, plus its JSON-RPC envelope.
@@ -229,7 +231,7 @@ def forward_rpc(home: Path, endpoint, method: str, params: dict) -> Any:
     async def call():
         async with connect_owner(home, endpoint, scope="host", max_size=frame) as client:
             return await client.rpc(method, **params)
-    return asyncio.run(call())
+    return asyncio.run(call() if timeout is None else asyncio.wait_for(call(), timeout))
 
 
 def forward_prompt(sid: str, session: dict, text: str, *, emit=None, home: Path | None = None) -> dict:
